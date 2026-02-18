@@ -29,6 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var settingsWindow: NSWindow?
     private var refreshTimer: Timer?
     private var eventMonitor: Any?
+    private var appActivateObserver: NSObjectProtocol?
     private let storage = Storage.shared
     var viewModel = AppViewModel()
     
@@ -36,6 +37,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setupPopover()
         setupMenuBar()
         setupGlobalHotKey()
+        setupAppActivateObserver()
         setupRefreshTimer()
         
         NSApp.setActivationPolicy(.accessory)
@@ -76,6 +78,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     
+    private func setupAppActivateObserver() {
+        appActivateObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let self = self else { return }
+            
+            if let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication {
+                if app.bundleIdentifier != Bundle.main.bundleIdentifier {
+                    self.closePopover()
+                }
+            }
+        }
+    }
+    
     @objc private func leftClick() {
         guard let event = NSApp.currentEvent else { return }
         
@@ -94,6 +112,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             if let button = statusItem?.button {
                 popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+                popover.contentViewController?.view.window?.makeKey()
                 NSApp.activate(ignoringOtherApps: true)
             }
         }
@@ -104,6 +123,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     private func showContextMenu() {
+        closePopover()
+        
         let menu = NSMenu()
         
         let refreshItem = NSMenuItem(title: "刷新", action: #selector(refreshAction), keyEquivalent: "r")
@@ -214,6 +235,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         refreshTimer?.invalidate()
         if let monitor = eventMonitor {
             NSEvent.removeMonitor(monitor)
+        }
+        if let observer = appActivateObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(observer)
         }
     }
 }
