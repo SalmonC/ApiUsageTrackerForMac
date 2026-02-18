@@ -15,10 +15,10 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "0023FFF07DF38FACDAEE114D"
-               BuildableName = "MacUsageTracker.app"
-               BlueprintName = "MacUsageTracker"
-               ReferencedContainer = "container:MacUsageTracker.xcodeproj">
+               BlueprintIdentifier = "34833AA8C3D6D914A37C1768"
+               BuildableName = "ApiUsageTrackerForMac.app"
+               BlueprintName = "ApiUsageTrackerForMac"
+               ReferencedContainer = "container:ApiUsageTrackerForMac.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
          <BuildActionEntry
@@ -29,10 +29,10 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "BF1A9A7FB38FA126AF0BBD42"
+               BlueprintIdentifier = "04C859F8B778F67EBB79DD5B"
                BuildableName = "UsageWidget.appex"
                BlueprintName = "UsageWidget"
-               ReferencedContainer = "container:MacUsageTracker.xcodeproj">
+               ReferencedContainer = "container:ApiUsageTrackerForMac.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -46,10 +46,10 @@
       <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "0023FFF07DF38FACDAEE114D"
-            BuildableName = "MacUsageTracker.app"
-            BlueprintName = "MacUsageTracker"
-            ReferencedContainer = "container:MacUsageTracker.xcodeproj">
+            BlueprintIdentifier = "34833AA8C3D6D914A37C1768"
+            BuildableName = "ApiUsageTrackerForMac.app"
+            BlueprintName = "ApiUsageTrackerForMac"
+            ReferencedContainer = "container:ApiUsageTrackerForMac.xcodeproj">
          </BuildableReference>
       </MacroExpansion>
       <Testables>
@@ -69,10 +69,10 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "0023FFF07DF38FACDAEE114D"
-            BuildableName = "MacUsageTracker.app"
-            BlueprintName = "MacUsageTracker"
-            ReferencedContainer = "container:MacUsageTracker.xcodeproj">
+            BlueprintIdentifier = "34833AA8C3D6D914A37C1768"
+            BuildableName = "ApiUsageTrackerForMac.app"
+            BlueprintName = "ApiUsageTrackerForMac"
+            ReferencedContainer = "container:ApiUsageTrackerForMac.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
       <CommandLineArguments>
@@ -88,10 +88,10 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "0023FFF07DF38FACDAEE114D"
-            BuildableName = "MacUsageTracker.app"
-            BlueprintName = "MacUsageTracker"
-            ReferencedContainer = "container:MacUsageTracker.xcodeproj">
+            BlueprintIdentifier = "34833AA8C3D6D914A37C1768"
+            BuildableName = "ApiUsageTrackerForMac.app"
+            BlueprintName = "ApiUsageTrackerForMac"
+            ReferencedContainer = "container:ApiUsageTrackerForMac.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>

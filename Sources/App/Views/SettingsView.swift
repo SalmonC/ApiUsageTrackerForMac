@@ -1,18 +1,18 @@
 import SwiftUI
 
 struct SettingsView: View {
-    private let suiteName = "group.com.mactools.macusagetracker"
+    private let suiteName = "group.com.mactools.apiusagetracker"
     
-    @AppStorage("miniMaxCodingAPIKey", store: UserDefaults(suiteName: "group.com.mactools.macusagetracker"))
+    @AppStorage("miniMaxCodingAPIKey", store: UserDefaults(suiteName: "group.com.mactools.apiusagetracker"))
     private var miniMaxCodingAPIKey = ""
     
-    @AppStorage("miniMaxPayAsGoAPIKey", store: UserDefaults(suiteName: "group.com.mactools.macusagetracker"))
+    @AppStorage("miniMaxPayAsGoAPIKey", store: UserDefaults(suiteName: "group.com.mactools.apiusagetracker"))
     private var miniMaxPayAsGoAPIKey = ""
     
-    @AppStorage("glmAPIKey", store: UserDefaults(suiteName: "group.com.mactools.macusagetracker"))
+    @AppStorage("glmAPIKey", store: UserDefaults(suiteName: "group.com.mactools.apiusagetracker"))
     private var glmAPIKey = ""
     
-    @AppStorage("refreshInterval", store: UserDefaults(suiteName: "group.com.mactools.macusagetracker"))
+    @AppStorage("refreshInterval", store: UserDefaults(suiteName: "group.com.mactools.apiusagetracker"))
     private var refreshInterval = 5
     
     var body: some View {

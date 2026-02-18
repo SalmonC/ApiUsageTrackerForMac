@@ -80,7 +80,7 @@ struct AppSettings: Codable {
 final class Storage {
     static let shared = Storage()
     
-    private let suiteName = "group.com.mactools.macusagetracker"
+    private let suiteName = "group.com.mactools.apiusagetracker"
     private let usageKey = "usageData"
     private let settingsKey = "appSettings"
     
