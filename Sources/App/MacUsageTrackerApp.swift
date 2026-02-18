@@ -7,8 +7,15 @@ struct ApiUsageTrackerForMacApp: App {
     
     var body: some Scene {
         Settings {
-            SettingsView()
+            SettingsWindow()
         }
+    }
+}
+
+struct SettingsWindow: View {
+    var body: some View {
+        SettingsView()
+            .frame(width: 450, height: 350)
     }
 }
 
@@ -16,6 +23,7 @@ struct ApiUsageTrackerForMacApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var popover: NSPopover?
+    private var settingsWindow: NSWindow?
     private var refreshTimer: Timer?
     private let storage = Storage.shared
     private var viewModel = AppViewModel()
@@ -104,21 +112,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     @objc private func openSettingsAction() {
-        openSettings()
+        openSettingsWindow()
     }
     
-    private func openSettings() {
+    private func openSettingsWindow() {
         popover?.performClose(nil)
         
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
-            guard let self = self else { return }
-            self.popover?.contentViewController = NSHostingController(
-                rootView: MainTabView(viewModel: self.viewModel, startAtSettings: true)
-            )
-            if let button = self.statusItem?.button {
-                self.popover?.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-            }
+        if settingsWindow == nil {
+            let settingsView = SettingsView()
+            let hostingController = NSHostingController(rootView: settingsView)
+            
+            let window = NSWindow(contentViewController: hostingController)
+            window.title = "设置"
+            window.styleMask = [.titled, .closable, .miniaturizable]
+            window.setContentSize(NSSize(width: 450, height: 350))
+            window.center()
+            window.isReleasedWhenClosed = false
+            
+            settingsWindow = window
         }
+        
+        settingsWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
     
     @objc private func toggleLaunchAtLogin() {
