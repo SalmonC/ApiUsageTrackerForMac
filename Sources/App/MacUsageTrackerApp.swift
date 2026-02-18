@@ -2,7 +2,7 @@ import SwiftUI
 import ServiceManagement
 
 @main
-struct MacUsageTrackerApp: App {
+struct ApiUsageTrackerForMacApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     
     var body: some Scene {
@@ -21,6 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var viewModel = AppViewModel()
     
     func applicationDidFinishLaunching(_ notification: Notification) {
+        setupPopover()
         setupMenuBar()
         setupRefreshTimer()
         Task {
@@ -40,11 +41,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     @objc private func leftClick() {
-        guard let event = NSApp.currentEvent, event.type == .rightMouseUp else {
+        guard let event = NSApp.currentEvent else { return }
+        
+        if event.type == .rightMouseUp {
+            showContextMenu()
+        } else {
             showPopover()
-            return
         }
-        showContextMenu()
     }
     
     private func showPopover() {
@@ -68,7 +71,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         
         menu.addItem(NSMenuItem.separator())
         
-        let settingsItem = NSMenuItem(title: "设置", action: #selector(openSettings), keyEquivalent: ",")
+        let settingsItem = NSMenuItem(title: "设置", action: #selector(openSettingsAction), keyEquivalent: ",")
         settingsItem.target = self
         menu.addItem(settingsItem)
         
@@ -100,14 +103,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     
-    @objc private func openSettings() {
+    @objc private func openSettingsAction() {
+        openSettings()
+    }
+    
+    private func openSettings() {
         popover?.performClose(nil)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-            if let button = self?.statusItem?.button {
-                self?.popover?.contentViewController = NSHostingController(
-                    rootView: MainTabView(viewModel: self!.viewModel, startAtSettings: true)
-                )
-                self?.popover?.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+            guard let self = self else { return }
+            self.popover?.contentViewController = NSHostingController(
+                rootView: MainTabView(viewModel: self.viewModel, startAtSettings: true)
+            )
+            if let button = self.statusItem?.button {
+                self.popover?.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             }
         }
     }
