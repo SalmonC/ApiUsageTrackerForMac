@@ -97,12 +97,12 @@ struct UsageWidgetEntryView: View {
             
             if entry.usageData.count > 1 {
                 VStack(alignment: .leading, spacing: 8) {
-                    ForEach(entry.usageData.dropFirst(), id: \.serviceType) { data in
+                    ForEach(entry.usageData.dropFirst(), id: \.accountId) { data in
                         HStack {
-                            Image(systemName: data.serviceType.icon)
+                Image(systemName: data.provider.icon)
                                 .foregroundColor(.blue)
                             VStack(alignment: .leading) {
-                                Text(data.serviceType.displayName)
+                Text(data.provider.displayName)
                                     .font(.caption2)
                                 Text(data.displayRemaining)
                                     .font(.caption)
@@ -140,7 +140,7 @@ struct UsageWidgetEntryView: View {
                     .foregroundColor(.secondary)
                 Spacer()
             } else {
-                ForEach(entry.usageData, id: \.serviceType) { data in
+                ForEach(entry.usageData, id: \.accountId) { data in
                     largeWidgetRow(data: data)
                 }
             }
@@ -153,9 +153,9 @@ struct UsageWidgetEntryView: View {
     private func largeWidgetRow(data: UsageData) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Image(systemName: data.serviceType.icon)
+                Image(systemName: data.provider.icon)
                     .foregroundColor(.blue)
-                Text(data.serviceType.displayName)
+                Text(data.provider.displayName)
                     .font(.subheadline)
                     .fontWeight(.medium)
                 Spacer()

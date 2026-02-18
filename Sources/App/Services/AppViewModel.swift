@@ -7,16 +7,15 @@ final class AppViewModel: ObservableObject {
     @Published var usageData: [UsageData] = []
     @Published var isLoading = false
     @Published var settings = Storage.shared.loadSettings()
+    @Published var secondsUntilTokenRefresh: Int = 0
     
-    private let services: [UsageService] = [
-        MiniMaxCodingService(),
-        MiniMaxPayAsGoService(),
-        GLMService()
-    ]
+    private var refreshTimer: Timer?
+    var onSettingsSaved: (() -> Void)?
+    var onOpenSettings: (() -> Void)?
     
     init() {
         loadCachedData()
-        loadSettings()
+        startCountdownTimer()
     }
     
     func loadSettings() {
@@ -30,33 +29,71 @@ final class AppViewModel: ObservableObject {
         }
     }
     
+    private func startCountdownTimer() {
+        updateTokenRefreshCountdown()
+        refreshTimer?.invalidate()
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self = self else { return }
+                if self.secondsUntilTokenRefresh > 0 {
+                    self.secondsUntilTokenRefresh -= 1
+                } else {
+                    self.updateTokenRefreshCountdown()
+                }
+            }
+        }
+    }
+    
+    private func updateTokenRefreshCountdown() {
+        let now = Date()
+        var earliestRefresh: Date?
+        
+        for data in usageData {
+            if let refreshTime = data.refreshTime, refreshTime > now {
+                if earliestRefresh == nil || refreshTime < earliestRefresh! {
+                    earliestRefresh = refreshTime
+                }
+            }
+        }
+        
+        if let refresh = earliestRefresh {
+            secondsUntilTokenRefresh = Int(refresh.timeIntervalSince(now))
+        } else {
+            secondsUntilTokenRefresh = 0
+        }
+    }
+    
+    func resetCountdown() {
+        startCountdownTimer()
+    }
+    
     func refreshAll() async {
         isLoading = true
         loadSettings()
         
         var newData: [UsageData] = []
         
-        for service in services {
-            let apiKey: String
-            switch service.serviceType {
-            case .miniMaxCoding:
-                apiKey = settings.miniMaxCodingAPIKey
-            case .miniMaxPayAsGo:
-                apiKey = settings.miniMaxPayAsGoAPIKey
-            case .glm:
-                apiKey = settings.glmAPIKey
-            }
-            
-            guard !apiKey.isEmpty else {
-                continue
-            }
+        for account in settings.accounts where account.isEnabled && !account.apiKey.isEmpty {
+            let service = getService(for: account.provider)
             
             do {
-                let data = try await service.fetchUsage(apiKey: apiKey)
-                newData.append(data)
+                let result = try await service.fetchUsage(apiKey: account.apiKey)
+                newData.append(UsageData(
+                    accountId: account.id,
+                    accountName: account.name.isEmpty ? account.provider.displayName : account.name,
+                    provider: account.provider,
+                    tokenRemaining: result.remaining,
+                    tokenUsed: result.used,
+                    tokenTotal: result.total,
+                    refreshTime: result.refreshTime,
+                    lastUpdated: Date(),
+                    errorMessage: nil
+                ))
             } catch {
                 newData.append(UsageData(
-                    serviceType: service.serviceType,
+                    accountId: account.id,
+                    accountName: account.name.isEmpty ? account.provider.displayName : account.name,
+                    provider: account.provider,
                     tokenRemaining: nil,
                     tokenUsed: nil,
                     tokenTotal: nil,
@@ -78,5 +115,14 @@ final class AppViewModel: ObservableObject {
     func saveSettings(_ newSettings: AppSettings) {
         settings = newSettings
         Storage.shared.saveSettings(newSettings)
+        onSettingsSaved?()
+    }
+    
+    func openSettings() {
+        onOpenSettings?()
+    }
+    
+    var hotkeyDisplayString: String {
+        settings.hotkey.displayString
     }
 }

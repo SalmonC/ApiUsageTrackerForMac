@@ -68,10 +68,10 @@ struct MainView: View {
             Image(systemName: "key.slash")
                 .font(.system(size: 32))
                 .foregroundColor(.secondary)
-            Text("No API Keys Configured")
+            Text("No API Accounts Configured")
                 .font(.subheadline)
                 .foregroundColor(.secondary)
-            Text("Right-click icon → Settings to add keys")
+            Text("Right-click icon → Settings to add accounts")
                 .font(.caption)
                 .foregroundColor(.secondary)
             Spacer()
@@ -81,8 +81,8 @@ struct MainView: View {
     
     private var usageListView: some View {
         ScrollView {
-            LazyVStack(spacing: 0) {
-                ForEach(viewModel.usageData, id: \.serviceType) { data in
+            LazyVStack(spacing: 8) {
+                ForEach(viewModel.usageData, id: \.accountId) { data in
                     UsageRowView(data: data, onRetry: {
                         Task {
                             await viewModel.refreshAll()
@@ -90,8 +90,8 @@ struct MainView: View {
                     })
                 }
             }
+            .padding(.horizontal)
         }
-        .frame(maxHeight: 280)
     }
     
     private var footerView: some View {
@@ -102,12 +102,30 @@ struct MainView: View {
                     .foregroundColor(.secondary)
             }
             Spacer()
-            Text("⌘⇧U")
-                .font(.caption2)
-                .foregroundColor(.secondary)
+            Button(action: {
+                viewModel.openSettings()
+            }) {
+                Image(systemName: "gear")
+                    .font(.system(size: 12))
+            }
+            .buttonStyle(.borderless)
+            .help("Settings")
         }
         .padding(.horizontal)
         .padding(.vertical, 8)
+    }
+    
+    private func formatCountdown(_ seconds: Int) -> String {
+        let hours = seconds / 3600
+        let minutes = (seconds % 3600) / 60
+        let secs = seconds % 60
+        if hours > 0 {
+            return String(format: "%dh %dm", hours, minutes)
+        } else if minutes > 0 {
+            return String(format: "%dm %ds", minutes, secs)
+        } else {
+            return String(format: "%ds", secs)
+        }
     }
     
     private func formattedTime(_ date: Date) -> String {
@@ -120,25 +138,121 @@ struct MainView: View {
 struct UsageRowView: View {
     let data: UsageData
     var onRetry: (() -> Void)?
+    @State private var isExpanded: Bool = false
     
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Image(systemName: data.serviceType.icon)
-                    .foregroundColor(.blue)
-                Text(data.serviceType.displayName)
-                    .font(.subheadline)
-                    .fontWeight(.medium)
+                Button(action: {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        isExpanded.toggle()
+                    }
+                }) {
+                    HStack(spacing: 8) {
+                        Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(.secondary)
+                            .frame(width: 20, height: 20)
+                        
+                        Image(systemName: data.provider.icon)
+                            .foregroundColor(.blue)
+                        Text(data.accountName)
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                    }
+                }
+                .buttonStyle(.plain)
+                
                 Spacer()
+                
+                compactInfoView
             }
             
+            if !isExpanded {
+                collapsedInfoView
+            } else {
+                expandedContent
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .padding()
+        .background(Color.gray.opacity(0.05))
+        .cornerRadius(8)
+    }
+    
+    @ViewBuilder
+    private var compactInfoView: some View {
+        if let error = data.errorMessage {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundColor(.red)
+                .help(error)
+        } else if let remaining = data.tokenRemaining {
+            VStack(alignment: .trailing, spacing: 0) {
+                Text(data.displayRemaining)
+                    .font(.system(.subheadline, design: .monospaced))
+                    .fontWeight(.semibold)
+                    .foregroundColor(remainingColor)
+                if data.tokenTotal != nil {
+                    Text(String(format: "%.0f%%", data.usagePercentage))
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+    }
+    
+    @ViewBuilder
+    private var collapsedInfoView: some View {
+        HStack(spacing: 16) {
+            if let used = data.tokenUsed {
+                HStack(spacing: 4) {
+                    Text("Used:")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Text(data.displayUsed)
+                        .font(.system(.caption, design: .monospaced))
+                        .fontWeight(.medium)
+                }
+            }
+            
+            if let total = data.tokenTotal {
+                HStack(spacing: 4) {
+                    Text("Total:")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Text(data.displayTotal)
+                        .font(.system(.caption, design: .monospaced))
+                        .fontWeight(.medium)
+                }
+            }
+            
+            Spacer()
+            
+            if data.tokenTotal != nil {
+                HStack(spacing: 6) {
+                    ProgressView(value: data.usagePercentage, total: 100)
+                        .frame(width: 60)
+                        .tint(usageColor)
+                    Text(String(format: "%.0f%%", data.usagePercentage))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .frame(width: 35, alignment: .trailing)
+                }
+            }
+        }
+        .padding(.top, 4)
+    }
+    
+    @ViewBuilder
+    private var expandedContent: some View {
+        VStack(alignment: .leading, spacing: 8) {
             if let error = data.errorMessage {
                 errorContent(error)
             } else {
                 normalContent
             }
         }
-        .padding()
+        .padding(.top, 8)
     }
     
     @ViewBuilder
@@ -170,26 +284,15 @@ struct UsageRowView: View {
     @ViewBuilder
     private var normalContent: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 16) {
-                if data.tokenRemaining != nil {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Remaining")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                        Text(data.displayRemaining)
-                            .font(.system(.title3, design: .monospaced))
-                            .fontWeight(.semibold)
-                            .foregroundColor(.green)
-                    }
-                }
-                
+            HStack(spacing: 20) {
                 if data.tokenUsed != nil {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Used")
                             .font(.caption2)
                             .foregroundColor(.secondary)
                         Text(data.displayUsed)
-                            .font(.system(.title3, design: .monospaced))
+                            .font(.system(.body, design: .monospaced))
+                            .fontWeight(.medium)
                     }
                 }
                 
@@ -199,7 +302,8 @@ struct UsageRowView: View {
                             .font(.caption2)
                             .foregroundColor(.secondary)
                         Text(data.displayTotal)
-                            .font(.system(.title3, design: .monospaced))
+                            .font(.system(.body, design: .monospaced))
+                            .fontWeight(.medium)
                     }
                 }
                 
@@ -207,8 +311,14 @@ struct UsageRowView: View {
             }
             
             if data.tokenUsed != nil && data.tokenTotal != nil {
-                ProgressView(value: data.usagePercentage, total: 100)
-                    .tint(usageColor)
+                HStack(spacing: 8) {
+                    ProgressView(value: data.usagePercentage, total: 100)
+                        .tint(usageColor)
+                    Text(String(format: "%.0f%%", data.usagePercentage))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .frame(width: 40, alignment: .trailing)
+                }
             }
             
             if let refreshTime = data.refreshTime {
@@ -217,9 +327,44 @@ struct UsageRowView: View {
                         .font(.caption2)
                     Text("Resets: \(formattedDate(refreshTime))")
                         .font(.caption2)
+                    if let countdown = countdownString(for: refreshTime) {
+                        Text("(\(countdown))")
+                            .font(.caption2)
+                            .foregroundColor(.blue)
+                    }
                 }
                 .foregroundColor(.secondary)
             }
+        }
+    }
+    
+    private var remainingColor: Color {
+        if data.tokenTotal != nil && data.tokenTotal! > 0 {
+            let pct = data.usagePercentage
+            if pct > 80 {
+                return .red
+            } else if pct > 50 {
+                return .orange
+            }
+        }
+        return .green
+    }
+    
+    private func countdownString(for refreshTime: Date) -> String? {
+        let now = Date()
+        guard refreshTime > now else { return nil }
+        
+        let seconds = Int(refreshTime.timeIntervalSince(now))
+        let hours = seconds / 3600
+        let minutes = (seconds % 3600) / 60
+        
+        if hours > 24 {
+            let days = hours / 24
+            return "\(days)d \(hours % 24)h"
+        } else if hours > 0 {
+            return "\(hours)h \(minutes)m"
+        } else {
+            return "\(minutes)m"
         }
     }
     

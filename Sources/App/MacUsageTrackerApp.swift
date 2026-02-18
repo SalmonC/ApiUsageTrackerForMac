@@ -28,7 +28,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var popover: NSPopover?
     private var settingsWindow: NSWindow?
     private var refreshTimer: Timer?
-    private var eventMonitor: Any?
+    private var globalEventMonitor: Any?
+    private var localEventMonitor: Any?
     private var appActivateObserver: NSObjectProtocol?
     private let storage = Storage.shared
     var viewModel = AppViewModel()
@@ -39,11 +40,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setupGlobalHotKey()
         setupAppActivateObserver()
         setupRefreshTimer()
+        setupSettingsCallback()
         
         NSApp.setActivationPolicy(.accessory)
         
         Task {
             await viewModel.refreshAll()
+        }
+    }
+    
+    private func setupSettingsCallback() {
+        viewModel.onSettingsSaved = { [weak self] in
+            Task { @MainActor in
+                await self?.viewModel.refreshAll()
+                self?.updateGlobalHotKey()
+                self?.viewModel.resetCountdown()
+            }
+        }
+        viewModel.onOpenSettings = { [weak self] in
+            self?.openSettingsWindow()
         }
     }
     
@@ -59,16 +74,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     private func setupGlobalHotKey() {
-        eventMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            if event.modifierFlags.contains([.command, .shift]) && event.charactersIgnoringModifiers?.lowercased() == "u" {
+        updateGlobalHotKey()
+    }
+    
+    private func updateGlobalHotKey() {
+        if let monitor = globalEventMonitor {
+            NSEvent.removeMonitor(monitor)
+            globalEventMonitor = nil
+        }
+        if let monitor = localEventMonitor {
+            NSEvent.removeMonitor(monitor)
+            localEventMonitor = nil
+        }
+        
+        let hotkey = viewModel.settings.hotkey
+        let targetKeyCode = hotkey.keyCode
+        let targetModifiers = hotkey.modifiers
+        
+        globalEventMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            if event.keyCode == targetKeyCode && self?.checkModifiers(event.modifierFlags, target: targetModifiers) == true {
                 DispatchQueue.main.async {
                     self?.showPopover()
                 }
             }
         }
         
-        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            if event.modifierFlags.contains([.command, .shift]) && event.charactersIgnoringModifiers?.lowercased() == "u" {
+        localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            if event.keyCode == targetKeyCode && self?.checkModifiers(event.modifierFlags, target: targetModifiers) == true {
                 DispatchQueue.main.async {
                     self?.showPopover()
                 }
@@ -76,6 +108,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             return event
         }
+    }
+    
+    private func checkModifiers(_ flags: NSEvent.ModifierFlags, target: UInt32) -> Bool {
+        let hasCommand = (target & UInt32(NSEvent.ModifierFlags.command.rawValue)) != 0
+        let hasShift = (target & UInt32(NSEvent.ModifierFlags.shift.rawValue)) != 0
+        let hasOption = (target & UInt32(NSEvent.ModifierFlags.option.rawValue)) != 0
+        let hasControl = (target & UInt32(NSEvent.ModifierFlags.control.rawValue)) != 0
+        
+        return flags.contains(.command) == hasCommand &&
+               flags.contains(.shift) == hasShift &&
+               flags.contains(.option) == hasOption &&
+               flags.contains(.control) == hasControl
     }
     
     private func setupAppActivateObserver() {
@@ -105,6 +149,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     private func showPopover() {
+        updatePopoverSize()
         guard let popover = popover else { return }
         
         if popover.isShown {
@@ -177,7 +222,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let hostingController = NSHostingController(rootView: settingsView)
             
             let window = NSWindow(contentViewController: hostingController)
-            window.title = "设置"
+            window.title = "Settings"
             window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
             window.setContentSize(NSSize(width: 450, height: 400))
             window.minSize = NSSize(width: 400, height: 300)
@@ -213,8 +258,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     private func setupPopover() {
+        updatePopoverSize()
+    }
+    
+    private func updatePopoverSize() {
+        viewModel.loadSettings()
+        let enabledAccounts = viewModel.settings.accounts.filter { $0.isEnabled }.count
+        let baseHeight: CGFloat = 120
+        let itemHeight: CGFloat = 100
+        let maxHeight: CGFloat = 500
+        let minHeight: CGFloat = 200
+        
+        let calculatedHeight = baseHeight + CGFloat(max(enabledAccounts, 1)) * itemHeight
+        let finalHeight = min(max(calculatedHeight, minHeight), maxHeight)
+        
         popover = NSPopover()
-        popover?.contentSize = NSSize(width: 320, height: 380)
+        popover?.contentSize = NSSize(width: 320, height: finalHeight)
         popover?.behavior = .transient
         popover?.contentViewController = NSHostingController(
             rootView: MainView(viewModel: viewModel)
@@ -233,7 +292,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     
     func applicationWillTerminate(_ notification: Notification) {
         refreshTimer?.invalidate()
-        if let monitor = eventMonitor {
+        if let monitor = globalEventMonitor {
+            NSEvent.removeMonitor(monitor)
+        }
+        if let monitor = localEventMonitor {
             NSEvent.removeMonitor(monitor)
         }
         if let observer = appActivateObserver {
