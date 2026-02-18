@@ -127,6 +127,7 @@ enum APIError: Error, LocalizedError {
     case invalidURL
     case invalidResponse
     case httpError(Int)
+    case httpErrorWithMessage(Int, String)
     case decodingError(Error)
     case noAPIKey
     case networkError(Error)
@@ -134,17 +135,19 @@ enum APIError: Error, LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidURL:
-            return "Invalid URL"
+            return "无效的URL"
         case .invalidResponse:
-            return "Invalid response"
+            return "无效的响应"
         case .httpError(let code):
-            return "HTTP error: \(code)"
-        case .decodingError(let error):
-            return "Decoding error: \(error.localizedDescription)"
+            return "HTTP错误: \(code)"
+        case .httpErrorWithMessage(let code, let message):
+            return "HTTP \(code): \(message)"
+        case .decodingError:
+            return "数据解析失败"
         case .noAPIKey:
-            return "API key not configured"
+            return "未配置API Key"
         case .networkError(let error):
-            return "Network error: \(error.localizedDescription)"
+            return "网络错误: \(error.localizedDescription)"
         }
     }
 }

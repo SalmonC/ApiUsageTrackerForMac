@@ -8,33 +8,51 @@ final class MiniMaxCodingService: UsageService {
             throw APIError.noAPIKey
         }
         
-        let url = URL(string: "https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains")!
+        let urlString = "https://api.minimax.chat/v1/coding_plan/remains"
+        guard let url = URL(string: urlString) else {
+            throw APIError.invalidURL
+        }
+        
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 30
         
-        let (data, response) = try await URLSession.shared.data(for: request)
-        
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw APIError.invalidResponse
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw APIError.invalidResponse
+            }
+            
+            if httpResponse.statusCode != 200 {
+                if let errorString = String(data: data, encoding: .utf8) {
+                    throw APIError.httpErrorWithMessage(httpResponse.statusCode, errorString)
+                }
+                throw APIError.httpError(httpResponse.statusCode)
+            }
+            
+            if let jsonString = String(data: data, encoding: .utf8) {
+                print("MiniMax API Response: \(jsonString)")
+            }
+            
+            let decoded = try JSONDecoder().decode(MiniMaxCodingResponse.self, from: data)
+            
+            return UsageData(
+                serviceType: .miniMaxCoding,
+                tokenRemaining: Double(decoded.data.remaining),
+                tokenUsed: Double(decoded.data.used),
+                tokenTotal: Double(decoded.data.total),
+                refreshTime: ISO8601DateFormatter().date(from: decoded.data.nextResetTime),
+                lastUpdated: Date(),
+                errorMessage: nil
+            )
+        } catch let error as APIError {
+            throw error
+        } catch {
+            throw APIError.networkError(error)
         }
-        
-        guard httpResponse.statusCode == 200 else {
-            throw APIError.httpError(httpResponse.statusCode)
-        }
-        
-        let decoded = try JSONDecoder().decode(MiniMaxCodingResponse.self, from: data)
-        
-        return UsageData(
-            serviceType: .miniMaxCoding,
-            tokenRemaining: Double(decoded.data.remaining),
-            tokenUsed: Double(decoded.data.used),
-            tokenTotal: Double(decoded.data.total),
-            refreshTime: ISO8601DateFormatter().date(from: decoded.data.nextResetTime),
-            lastUpdated: Date(),
-            errorMessage: nil
-        )
     }
 }
 
