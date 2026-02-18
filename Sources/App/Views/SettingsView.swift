@@ -1,7 +1,8 @@
 import SwiftUI
 
 struct SettingsView: View {
-    @StateObject private var viewModel = SettingsViewModel()
+    @ObservedObject var viewModel: AppViewModel
+    @StateObject private var settingsVM = SettingsViewModel()
     
     var body: some View {
         TabView {
@@ -21,15 +22,15 @@ struct SettingsView: View {
     private var generalSettingsView: some View {
         Form {
             Section {
-                Picker("Refresh Interval", selection: $viewModel.refreshInterval) {
+                Picker("Refresh Interval", selection: $settingsVM.refreshInterval) {
                     Text("1 minute").tag(1)
                     Text("5 minutes").tag(5)
                     Text("15 minutes").tag(15)
                     Text("30 minutes").tag(30)
                     Text("1 hour").tag(60)
                 }
-                .onChange(of: viewModel.refreshInterval) { _, _ in
-                    viewModel.save()
+                .onChange(of: settingsVM.refreshInterval) { _, _ in
+                    saveAndRefresh()
                 }
             } header: {
                 Text("Refresh")
@@ -44,26 +45,26 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("MiniMax Coding Plan API Key")
                         .font(.headline)
-                    SecureField("Enter API Key", text: $viewModel.miniMaxCodingAPIKey)
+                    SecureField("Enter API Key", text: $settingsVM.miniMaxCodingAPIKey)
                         .textFieldStyle(.roundedBorder)
                 }
                 
                 VStack(alignment: .leading, spacing: 8) {
                     Text("MiniMax Pay-As-You-Go API Key")
                         .font(.headline)
-                    SecureField("Enter API Key", text: $viewModel.miniMaxPayAsGoAPIKey)
+                    SecureField("Enter API Key", text: $settingsVM.miniMaxPayAsGoAPIKey)
                         .textFieldStyle(.roundedBorder)
                 }
                 
                 VStack(alignment: .leading, spacing: 8) {
                     Text("GLM (智谱AI) API Key")
                         .font(.headline)
-                    SecureField("Enter API Key", text: $viewModel.glmAPIKey)
+                    SecureField("Enter API Key", text: $settingsVM.glmAPIKey)
                         .textFieldStyle(.roundedBorder)
                 }
                 
                 Button(action: {
-                    viewModel.save()
+                    saveAndRefresh()
                 }) {
                     HStack {
                         Image(systemName: "checkmark.circle.fill")
@@ -74,10 +75,14 @@ struct SettingsView: View {
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
                 
-                if viewModel.showSavedMessage {
-                    Text("Settings saved successfully!")
-                        .foregroundColor(.green)
-                        .font(.caption)
+                if settingsVM.showSavedMessage {
+                    HStack {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(.green)
+                        Text("Settings saved! Refreshing...")
+                            .foregroundColor(.green)
+                    }
+                    .font(.caption)
                 }
                 
                 Spacer()
@@ -87,6 +92,14 @@ struct SettingsView: View {
                     .foregroundColor(.secondary)
             }
             .padding()
+        }
+    }
+    
+    private func saveAndRefresh() {
+        settingsVM.save()
+        viewModel.loadSettings()
+        Task {
+            await viewModel.refreshAll()
         }
     }
 }

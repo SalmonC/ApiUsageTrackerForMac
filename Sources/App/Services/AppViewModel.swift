@@ -8,18 +8,32 @@ final class AppViewModel: ObservableObject {
     @Published var isLoading = false
     @Published var settings = Storage.shared.loadSettings()
     
-    private let services: [UsageService] = [MiniMaxCodingService()]
+    private let services: [UsageService] = [
+        MiniMaxCodingService(),
+        MiniMaxPayAsGoService(),
+        GLMService()
+    ]
     
     init() {
         loadCachedData()
+        loadSettings()
+    }
+    
+    func loadSettings() {
+        settings = Storage.shared.loadSettings()
     }
     
     private func loadCachedData() {
-        usageData = Storage.shared.loadUsageData()
+        let cached = Storage.shared.loadUsageData()
+        if !cached.isEmpty {
+            usageData = cached
+        }
     }
     
     func refreshAll() async {
         isLoading = true
+        loadSettings()
+        
         var newData: [UsageData] = []
         
         for service in services {
@@ -34,15 +48,6 @@ final class AppViewModel: ObservableObject {
             }
             
             guard !apiKey.isEmpty else {
-                newData.append(UsageData(
-                    serviceType: service.serviceType,
-                    tokenRemaining: nil,
-                    tokenUsed: nil,
-                    tokenTotal: nil,
-                    refreshTime: nil,
-                    lastUpdated: Date(),
-                    errorMessage: "API Key not configured"
-                ))
                 continue
             }
             

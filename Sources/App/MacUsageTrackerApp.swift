@@ -7,14 +7,16 @@ struct ApiUsageTrackerForMacApp: App {
     
     var body: some Scene {
         Settings {
-            SettingsWindow()
+            SettingsWindow(viewModel: appDelegate.viewModel)
         }
     }
 }
 
 struct SettingsWindow: View {
+    @ObservedObject var viewModel: AppViewModel
+    
     var body: some View {
-        SettingsView()
+        SettingsView(viewModel: viewModel)
             .frame(width: 450, height: 350)
     }
 }
@@ -26,7 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var settingsWindow: NSWindow?
     private var refreshTimer: Timer?
     private let storage = Storage.shared
-    private var viewModel = AppViewModel()
+    var viewModel = AppViewModel()
     
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupPopover()
@@ -119,7 +121,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         popover?.performClose(nil)
         
         if settingsWindow == nil {
-            let settingsView = SettingsView()
+            let settingsView = SettingsView(viewModel: viewModel)
             let hostingController = NSHostingController(rootView: settingsView)
             
             let window = NSWindow(contentViewController: hostingController)

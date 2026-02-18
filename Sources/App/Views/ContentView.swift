@@ -19,7 +19,7 @@ struct MainTabView: View {
                 }
                 .tag(0)
             
-            SettingsView()
+            SettingsView(viewModel: viewModel)
                 .tabItem {
                     Label("Settings", systemImage: "gear")
                 }
@@ -60,8 +60,13 @@ struct MainTabView: View {
                     await viewModel.refreshAll()
                 }
             }) {
-                Image(systemName: "arrow.clockwise")
-                    .font(.system(size: 12, weight: .medium))
+                if viewModel.isLoading {
+                    ProgressView()
+                        .scaleEffect(0.6)
+                } else {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 12, weight: .medium))
+                }
             }
             .buttonStyle(.borderless)
             .disabled(viewModel.isLoading)
@@ -70,7 +75,7 @@ struct MainTabView: View {
     }
     
     private var loadingView: some View {
-        VStack {
+        VStack(spacing: 12) {
             Spacer()
             ProgressView()
                 .scaleEffect(0.8)
@@ -85,10 +90,10 @@ struct MainTabView: View {
     private var emptyView: some View {
         VStack(spacing: 12) {
             Spacer()
-            Image(systemName: "tray")
+            Image(systemName: "key.slash")
                 .font(.system(size: 32))
                 .foregroundColor(.secondary)
-            Text("No services configured")
+            Text("No API Keys Configured")
                 .font(.subheadline)
                 .foregroundColor(.secondary)
             Text("Go to Settings to add API keys")
@@ -103,7 +108,11 @@ struct MainTabView: View {
         ScrollView {
             LazyVStack(spacing: 0) {
                 ForEach(viewModel.usageData, id: \.serviceType) { data in
-                    UsageRowView(data: data)
+                    UsageRowView(data: data, onRetry: {
+                        Task {
+                            await viewModel.refreshAll()
+                        }
+                    })
                 }
             }
         }
@@ -112,9 +121,11 @@ struct MainTabView: View {
     
     private var footerView: some View {
         HStack {
-            Text("Updated: \(formattedTime(Date()))")
-                .font(.caption2)
-                .foregroundColor(.secondary)
+            if let lastUpdate = viewModel.usageData.first?.lastUpdated {
+                Text("Updated: \(formattedTime(lastUpdate))")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
             Spacer()
         }
         .padding(.horizontal)
@@ -130,6 +141,7 @@ struct MainTabView: View {
 
 struct UsageRowView: View {
     let data: UsageData
+    var onRetry: (() -> Void)?
     
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -143,15 +155,45 @@ struct UsageRowView: View {
             }
             
             if let error = data.errorMessage {
-                HStack {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundColor(.orange)
-                    Text(error)
-                        .font(.caption)
-                        .foregroundColor(.orange)
-                }
+                errorContent(error)
             } else {
-                HStack(spacing: 16) {
+                normalContent
+            }
+        }
+        .padding()
+    }
+    
+    @ViewBuilder
+    private func errorContent(_ error: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundColor(.red)
+                Text(error)
+                    .font(.caption)
+                    .foregroundColor(.red)
+                    .lineLimit(2)
+            }
+            
+            if let onRetry = onRetry {
+                Button(action: onRetry) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.clockwise")
+                        Text("Retry")
+                    }
+                    .font(.caption)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+        }
+    }
+    
+    @ViewBuilder
+    private var normalContent: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 16) {
+                if data.tokenRemaining != nil {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Remaining")
                             .font(.caption2)
@@ -159,8 +201,11 @@ struct UsageRowView: View {
                         Text(data.displayRemaining)
                             .font(.system(.title3, design: .monospaced))
                             .fontWeight(.semibold)
+                            .foregroundColor(.green)
                     }
-                    
+                }
+                
+                if data.tokenUsed != nil {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Used")
                             .font(.caption2)
@@ -168,37 +213,36 @@ struct UsageRowView: View {
                         Text(data.displayUsed)
                             .font(.system(.title3, design: .monospaced))
                     }
-                    
-                    if data.tokenTotal != nil {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Total")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                            Text(data.displayTotal)
-                                .font(.system(.title3, design: .monospaced))
-                        }
-                    }
-                    
-                    Spacer()
                 }
                 
-                if data.tokenUsed != nil && data.tokenTotal != nil {
-                    ProgressView(value: data.usagePercentage, total: 100)
-                        .tint(usageColor)
+                if data.tokenTotal != nil {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Total")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        Text(data.displayTotal)
+                            .font(.system(.title3, design: .monospaced))
+                    }
                 }
                 
-                if let refreshTime = data.refreshTime {
-                    HStack {
-                        Image(systemName: "clock")
-                            .font(.caption2)
-                        Text("Resets: \(formattedDate(refreshTime))")
-                            .font(.caption2)
-                    }
-                    .foregroundColor(.secondary)
+                Spacer()
+            }
+            
+            if data.tokenUsed != nil && data.tokenTotal != nil {
+                ProgressView(value: data.usagePercentage, total: 100)
+                    .tint(usageColor)
+            }
+            
+            if let refreshTime = data.refreshTime {
+                HStack {
+                    Image(systemName: "clock")
+                        .font(.caption2)
+                    Text("Resets: \(formattedDate(refreshTime))")
+                        .font(.caption2)
                 }
+                .foregroundColor(.secondary)
             }
         }
-        .padding()
     }
     
     private var usageColor: Color {
