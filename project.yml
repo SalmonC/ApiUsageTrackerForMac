@@ -30,6 +30,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.mactools.apiusagetracker
+        PRODUCT_NAME: API Tracker
         INFOPLIST_FILE: Sources/App/Resources/Info.plist
         CODE_SIGN_ENTITLEMENTS: Sources/App/Resources/ApiUsageTrackerForMac.entitlements
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks"
@@ -56,6 +57,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.mactools.apiusagetracker.widget
+        PRODUCT_NAME: API Tracker Widget
         INFOPLIST_FILE: Sources/Widget/Info.plist
         CODE_SIGN_ENTITLEMENTS: Sources/Widget/UsageWidget.entitlements
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks @executable_path/../../../../Frameworks"

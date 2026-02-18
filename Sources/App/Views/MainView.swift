@@ -1,34 +1,9 @@
 import SwiftUI
 
-struct MainTabView: View {
+struct MainView: View {
     @ObservedObject var viewModel: AppViewModel
-    var startAtSettings: Bool = false
-    
-    @State private var selectedTab: Int = 0
-    
-    init(viewModel: AppViewModel, startAtSettings: Bool = false) {
-        self.viewModel = viewModel
-        self._selectedTab = State(initialValue: startAtSettings ? 1 : 0)
-    }
     
     var body: some View {
-        TabView(selection: $selectedTab) {
-            mainView
-                .tabItem {
-                    Label("Usage", systemImage: "chart.bar")
-                }
-                .tag(0)
-            
-            SettingsView(viewModel: viewModel)
-                .tabItem {
-                    Label("Settings", systemImage: "gear")
-                }
-                .tag(1)
-        }
-        .frame(width: 320, height: 400)
-    }
-    
-    private var mainView: some View {
         VStack(spacing: 0) {
             headerView
             
@@ -96,7 +71,7 @@ struct MainTabView: View {
             Text("No API Keys Configured")
                 .font(.subheadline)
                 .foregroundColor(.secondary)
-            Text("Go to Settings to add API keys")
+            Text("Right-click icon → Settings to add keys")
                 .font(.caption)
                 .foregroundColor(.secondary)
             Spacer()
@@ -127,6 +102,9 @@ struct MainTabView: View {
                     .foregroundColor(.secondary)
             }
             Spacer()
+            Text("⌘⇧U")
+                .font(.caption2)
+                .foregroundColor(.secondary)
         }
         .padding(.horizontal)
         .padding(.vertical, 8)

@@ -1,5 +1,6 @@
 import SwiftUI
 import ServiceManagement
+import Carbon
 
 @main
 struct ApiUsageTrackerForMacApp: App {
@@ -27,12 +28,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var popover: NSPopover?
     private var settingsWindow: NSWindow?
     private var refreshTimer: Timer?
+    private var globalHotKey: Any?
     private let storage = Storage.shared
     var viewModel = AppViewModel()
     
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupPopover()
         setupMenuBar()
+        setupGlobalHotKey()
         setupRefreshTimer()
         Task {
             await viewModel.refreshAll()
@@ -43,10 +46,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         
         if let button = statusItem?.button {
-            button.image = NSImage(systemSymbolName: "chart.bar.fill", accessibilityDescription: "Usage Tracker")
+            button.image = NSImage(systemSymbolName: "chart.bar.fill", accessibilityDescription: "API Tracker")
             button.action = #selector(leftClick)
             button.target = self
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        }
+    }
+    
+    private func setupGlobalHotKey() {
+        NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            if event.modifierFlags.contains([.command, .shift]) && event.keyCode == 32 {
+                DispatchQueue.main.async {
+                    self?.showPopover()
+                }
+            }
+        }
+        
+        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            if event.modifierFlags.contains([.command, .shift]) && event.keyCode == 32 {
+                DispatchQueue.main.async {
+                    self?.showPopover()
+                }
+                return nil
+            }
+            return event
         }
     }
     
@@ -162,10 +185,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     
     private func setupPopover() {
         popover = NSPopover()
-        popover?.contentSize = NSSize(width: 320, height: 400)
+        popover?.contentSize = NSSize(width: 320, height: 380)
         popover?.behavior = .transient
         popover?.contentViewController = NSHostingController(
-            rootView: MainTabView(viewModel: viewModel, startAtSettings: false)
+            rootView: MainView(viewModel: viewModel)
         )
     }
     

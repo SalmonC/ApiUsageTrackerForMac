@@ -10,9 +10,9 @@
 		2F354338374BBE8C89013084 /* SharedModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F3BE82DBDF7BDA7FBF833C5 /* SharedModels.swift */; };
 		51B759ECE94762BF27924160 /* UsageWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 968868EBA04CD1558EB228E7 /* UsageWidget.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		75302147951E22D6A38C4EA3 /* MiniMaxService.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF6096690722C92957C3D20B /* MiniMaxService.swift */; };
-		7A668F1B04A41ECD84012B6D /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB64DF29C6AA2AEF21644CF0 /* ContentView.swift */; };
 		8E0EC68197844D01FD823D84 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C9CD75A9EE1CA102F828EAF /* SettingsView.swift */; };
 		8F4170DA7AC40592349FAD58 /* UsageWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB8F3E644DAA9E6A7DAE3671 /* UsageWidget.swift */; };
+		BAFDF737F3AA15CB4135459F /* MainView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5778A959BCC4A1A91986E98 /* MainView.swift */; };
 		BB82017101EB0C005F18FB10 /* AppViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7489D4F3FE30134FA1FFE58 /* AppViewModel.swift */; };
 		BD0C01256AD90323EA278935 /* MacUsageTrackerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8892B5835F6801D9232A56D4 /* MacUsageTrackerApp.swift */; };
 		CC3DD365C7161D8DFC3C7B5B /* MiniMaxService.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF6096690722C92957C3D20B /* MiniMaxService.swift */; };
@@ -53,7 +53,7 @@
 		968868EBA04CD1558EB228E7 /* UsageWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = UsageWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		A7489D4F3FE30134FA1FFE58 /* AppViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppViewModel.swift; sourceTree = "<group>"; };
 		AB8F3E644DAA9E6A7DAE3671 /* UsageWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageWidget.swift; sourceTree = "<group>"; };
-		BB64DF29C6AA2AEF21644CF0 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		D5778A959BCC4A1A91986E98 /* MainView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainView.swift; sourceTree = "<group>"; };
 		DF6096690722C92957C3D20B /* MiniMaxService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MiniMaxService.swift; sourceTree = "<group>"; };
 		E38E7BA76C378B83321F9903 /* ApiUsageTrackerForMac.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ApiUsageTrackerForMac.entitlements; sourceTree = "<group>"; };
 		F6E7B49F6EFDBFE6E3C7A42D /* UsageWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = UsageWidget.entitlements; sourceTree = "<group>"; };
@@ -116,7 +116,7 @@
 		5B9E81D8AA4A9EDFDE2DFE57 /* Views */ = {
 			isa = PBXGroup;
 			children = (
-				BB64DF29C6AA2AEF21644CF0 /* ContentView.swift */,
+				D5778A959BCC4A1A91986E98 /* MainView.swift */,
 				4C9CD75A9EE1CA102F828EAF /* SettingsView.swift */,
 			);
 			path = Views;
@@ -238,8 +238,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				BB82017101EB0C005F18FB10 /* AppViewModel.swift in Sources */,
-				7A668F1B04A41ECD84012B6D /* ContentView.swift in Sources */,
 				BD0C01256AD90323EA278935 /* MacUsageTrackerApp.swift in Sources */,
+				BAFDF737F3AA15CB4135459F /* MainView.swift in Sources */,
 				CC3DD365C7161D8DFC3C7B5B /* MiniMaxService.swift in Sources */,
 				8E0EC68197844D01FD823D84 /* SettingsView.swift in Sources */,
 				2F354338374BBE8C89013084 /* SharedModels.swift in Sources */,
@@ -327,6 +327,7 @@
 				INFOPLIST_FILE = Sources/Widget/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks @executable_path/../../../../Frameworks";
 				PRODUCT_BUNDLE_IDENTIFIER = com.mactools.apiusagetracker.widget;
+				PRODUCT_NAME = "API Tracker Widget";
 				SDKROOT = macosx;
 				SKIP_INSTALL = YES;
 			};
@@ -344,6 +345,7 @@
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
 				LSUIElement = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = com.mactools.apiusagetracker;
+				PRODUCT_NAME = "API Tracker";
 				SDKROOT = macosx;
 			};
 			name = Release;
@@ -360,6 +362,7 @@
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
 				LSUIElement = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = com.mactools.apiusagetracker;
+				PRODUCT_NAME = "API Tracker";
 				SDKROOT = macosx;
 			};
 			name = Debug;
@@ -373,6 +376,7 @@
 				INFOPLIST_FILE = Sources/Widget/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks @executable_path/../../../../Frameworks";
 				PRODUCT_BUNDLE_IDENTIFIER = com.mactools.apiusagetracker.widget;
+				PRODUCT_NAME = "API Tracker Widget";
 				SDKROOT = macosx;
 				SKIP_INSTALL = YES;
 			};
