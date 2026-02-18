@@ -1,0 +1,22 @@
+# Xcode
+.DS_Store
+build/
+*.xcuserstate
+*.xcuserdatad
+xcuserdata/
+*.xcworkspace
+!default.xcworkspace
+
+# XcodeGen
+*.xcodeproj/project.xcworkspace/
+
+# App
+*.app
+*.dmg
+*.pkg
+
+# DerivedData
+~/Library/Developer/Xcode/DerivedData/
+
+# Archives
+*.zip
