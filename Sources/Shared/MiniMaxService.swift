@@ -8,7 +8,7 @@ final class MiniMaxCodingService: UsageService {
             throw APIError.noAPIKey
         }
         
-        let urlString = "https://api.minimax.chat/v1/coding_plan/remains"
+        let urlString = "https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains"
         guard let url = URL(string: urlString) else {
             throw APIError.invalidURL
         }
@@ -33,18 +33,20 @@ final class MiniMaxCodingService: UsageService {
                 throw APIError.httpError(httpResponse.statusCode)
             }
             
-            if let jsonString = String(data: data, encoding: .utf8) {
-                print("MiniMax API Response: \(jsonString)")
+            let decoded = try JSONDecoder().decode(MiniMaxCodingResponse.self, from: data)
+            
+            guard let modelData = decoded.modelRemains.first else {
+                throw APIError.decodingError(NSError(domain: "", code: 0))
             }
             
-            let decoded = try JSONDecoder().decode(MiniMaxCodingResponse.self, from: data)
+            let used = modelData.currentIntervalTotalCount - modelData.currentIntervalUsageCount
             
             return UsageData(
                 serviceType: .miniMaxCoding,
-                tokenRemaining: Double(decoded.data.remaining),
-                tokenUsed: Double(decoded.data.used),
-                tokenTotal: Double(decoded.data.total),
-                refreshTime: ISO8601DateFormatter().date(from: decoded.data.nextResetTime),
+                tokenRemaining: Double(modelData.currentIntervalUsageCount),
+                tokenUsed: Double(used),
+                tokenTotal: Double(modelData.currentIntervalTotalCount),
+                refreshTime: Date(timeIntervalSince1970: TimeInterval(modelData.endTime) / 1000),
                 lastUpdated: Date(),
                 errorMessage: nil
             )
@@ -57,16 +59,41 @@ final class MiniMaxCodingService: UsageService {
 }
 
 struct MiniMaxCodingResponse: Codable {
-    let code: Int
-    let msg: String
-    let data: MiniMaxCodingData
+    let modelRemains: [MiniMaxCodingData]
+    let baseResp: BaseResp
+    
+    enum CodingKeys: String, CodingKey {
+        case modelRemains = "model_remains"
+        case baseResp = "base_resp"
+    }
 }
 
 struct MiniMaxCodingData: Codable {
-    let remaining: Int
-    let used: Int
-    let total: Int
-    let nextResetTime: String
+    let startTime: Int
+    let endTime: Int
+    let remainsTime: Int
+    let currentIntervalTotalCount: Int
+    let currentIntervalUsageCount: Int
+    let modelName: String
+    
+    enum CodingKeys: String, CodingKey {
+        case startTime = "start_time"
+        case endTime = "end_time"
+        case remainsTime = "remains_time"
+        case currentIntervalTotalCount = "current_interval_total_count"
+        case currentIntervalUsageCount = "current_interval_usage_count"
+        case modelName = "model_name"
+    }
+}
+
+struct BaseResp: Codable {
+    let statusCode: Int
+    let statusMsg: String
+    
+    enum CodingKeys: String, CodingKey {
+        case statusCode = "status_code"
+        case statusMsg = "status_msg"
+    }
 }
 
 final class MiniMaxPayAsGoService: UsageService {
