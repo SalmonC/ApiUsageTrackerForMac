@@ -28,7 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var popover: NSPopover?
     private var settingsWindow: NSWindow?
     private var refreshTimer: Timer?
-    private var globalHotKey: Any?
+    private var eventMonitor: Any?
     private let storage = Storage.shared
     var viewModel = AppViewModel()
     
@@ -37,6 +37,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setupMenuBar()
         setupGlobalHotKey()
         setupRefreshTimer()
+        
+        NSApp.setActivationPolicy(.accessory)
+        
         Task {
             await viewModel.refreshAll()
         }
@@ -54,8 +57,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     private func setupGlobalHotKey() {
-        NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            if event.modifierFlags.contains([.command, .shift]) && event.keyCode == 32 {
+        eventMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            if event.modifierFlags.contains([.command, .shift]) && event.charactersIgnoringModifiers?.lowercased() == "u" {
                 DispatchQueue.main.async {
                     self?.showPopover()
                 }
@@ -63,7 +66,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            if event.modifierFlags.contains([.command, .shift]) && event.keyCode == 32 {
+            if event.modifierFlags.contains([.command, .shift]) && event.charactersIgnoringModifiers?.lowercased() == "u" {
                 DispatchQueue.main.async {
                     self?.showPopover()
                 }
@@ -91,8 +94,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             if let button = statusItem?.button {
                 popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+                NSApp.activate(ignoringOtherApps: true)
             }
         }
+    }
+    
+    private func closePopover() {
+        popover?.performClose(nil)
     }
     
     private func showContextMenu() {
@@ -141,7 +149,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     private func openSettingsWindow() {
-        popover?.performClose(nil)
+        closePopover()
         
         if settingsWindow == nil {
             let settingsView = SettingsView(viewModel: viewModel)
@@ -204,5 +212,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     
     func applicationWillTerminate(_ notification: Notification) {
         refreshTimer?.invalidate()
+        if let monitor = eventMonitor {
+            NSEvent.removeMonitor(monitor)
+        }
     }
 }
