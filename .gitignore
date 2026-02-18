@@ -20,3 +20,6 @@ xcuserdata/
 
 # Archives
 *.zip
+
+# Version (local development)
+VERSION
