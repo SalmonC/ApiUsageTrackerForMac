@@ -27,7 +27,7 @@ struct SettingsView: View {
                     Label("API Keys", systemImage: "key")
                 }
         }
-        .frame(width: 450, height: 300)
+        .tabViewStyle(.automatic)
     }
     
     private var generalSettingsView: some View {
@@ -48,19 +48,36 @@ struct SettingsView: View {
     }
     
     private var apiKeysSettingsView: some View {
-        Form {
-            Section {
-                SecureField("MiniMax Coding Plan API Key", text: $miniMaxCodingAPIKey)
-                SecureField("MiniMax Pay-As-You-Go API Key", text: $miniMaxPayAsGoAPIKey)
-                SecureField("GLM (智谱AI) API Key", text: $glmAPIKey)
-            } header: {
-                Text("API Keys")
-            } footer: {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("MiniMax Coding Plan API Key")
+                        .font(.headline)
+                    SecureField("Enter API Key", text: $miniMaxCodingAPIKey)
+                        .textFieldStyle(.roundedBorder)
+                }
+                
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("MiniMax Pay-As-You-Go API Key")
+                        .font(.headline)
+                    SecureField("Enter API Key", text: $miniMaxPayAsGoAPIKey)
+                        .textFieldStyle(.roundedBorder)
+                }
+                
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("GLM (智谱AI) API Key")
+                        .font(.headline)
+                    SecureField("Enter API Key", text: $glmAPIKey)
+                        .textFieldStyle(.roundedBorder)
+                }
+                
+                Spacer()
+                
                 Text("Your API keys are stored in the app's shared container.")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
+            .padding()
         }
-        .padding()
     }
 }

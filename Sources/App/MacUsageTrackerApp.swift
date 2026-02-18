@@ -124,8 +124,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             
             let window = NSWindow(contentViewController: hostingController)
             window.title = "设置"
-            window.styleMask = [.titled, .closable, .miniaturizable]
-            window.setContentSize(NSSize(width: 450, height: 350))
+            window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+            window.setContentSize(NSSize(width: 450, height: 400))
+            window.minSize = NSSize(width: 400, height: 300)
             window.center()
             window.isReleasedWhenClosed = false
             
