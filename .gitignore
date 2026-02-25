@@ -1,5 +1,7 @@
-# Xcode
+# macOS
 .DS_Store
+
+# Xcode
 build/
 *.xcuserstate
 *.xcuserdatad
@@ -10,16 +12,50 @@ xcuserdata/
 # XcodeGen
 *.xcodeproj/project.xcworkspace/
 
-# App
+# App Build Artifacts
 *.app
 *.dmg
 *.pkg
 
-# DerivedData
+# Derived Data
+DerivedData/
 ~/Library/Developer/Xcode/DerivedData/
 
 # Archives
 *.zip
+*.ipa
+*.dSYM.zip
+*.dSYM
 
-# Version (local development)
+# Swift Package Manager
+.build/
+Package.resolved
+
+# CocoaPods
+Pods/
+*.xcconfig
+
+# Carthage
+Carthage/Build/
+Carthage/Checkouts/
+
+# fastlane
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/**/*.png
+fastlane/test_output
+
+# Local development
 VERSION
+api_tracker.log
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Temp
+*.tmp
+.temp/
