@@ -91,7 +91,12 @@ final class AppViewModel: ObservableObject {
                     tokenTotal: result.total,
                     refreshTime: result.refreshTime,
                     lastUpdated: Date(),
-                    errorMessage: nil
+                    errorMessage: nil,
+                    monthlyRemaining: result.monthlyRemaining,
+                    monthlyTotal: result.monthlyTotal,
+                    monthlyUsed: result.monthlyUsed,
+                    monthlyRefreshTime: result.monthlyRefreshTime,
+                    nextRefreshTime: result.nextRefreshTime
                 ))
             } catch {
                 newData.append(UsageData(
@@ -103,7 +108,12 @@ final class AppViewModel: ObservableObject {
                     tokenTotal: nil,
                     refreshTime: nil,
                     lastUpdated: Date(),
-                    errorMessage: error.localizedDescription
+                    errorMessage: error.localizedDescription,
+                    monthlyRemaining: nil,
+                    monthlyTotal: nil,
+                    monthlyUsed: nil,
+                    monthlyRefreshTime: nil,
+                    nextRefreshTime: nil
                 ))
             }
         }

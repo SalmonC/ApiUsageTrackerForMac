@@ -1,5 +1,10 @@
 import SwiftUI
 
+// Notification for expand/collapse state change
+extension Notification.Name {
+    static let usageRowExpansionChanged = Notification.Name("usageRowExpansionChanged")
+}
+
 struct MainView: View {
     @ObservedObject var viewModel: AppViewModel
     
@@ -149,6 +154,7 @@ struct UsageRowView: View {
                 Button(action: {
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                         isExpanded.toggle()
+                        NotificationCenter.default.post(name: .usageRowExpansionChanged, object: nil)
                     }
                 }) {
                     Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
@@ -187,6 +193,7 @@ struct UsageRowView: View {
             .onTapGesture {
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                     isExpanded.toggle()
+                    NotificationCenter.default.post(name: .usageRowExpansionChanged, object: nil)
                 }
             }
             
@@ -385,6 +392,102 @@ struct UsageRowView: View {
                 }
             }
             
+            // Monthly quota section (if available)
+            if data.monthlyTotal != nil || data.monthlyRemaining != nil {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Monthly Quota")
+                            .font(.caption)
+                            .fontWeight(.medium)
+                            .foregroundColor(.primary)
+                        Spacer()
+                    }
+                    
+                    HStack(spacing: 0) {
+                        if data.monthlyUsed != nil {
+                            StatBox(
+                                title: "Used",
+                                value: data.displayMonthlyUsed,
+                                icon: "arrow.down.circle.fill",
+                                color: .orange
+                            )
+                            .frame(maxWidth: .infinity)
+                        }
+                        
+                        if data.monthlyTotal != nil {
+                            StatBox(
+                                title: "Total",
+                                value: data.displayMonthlyTotal,
+                                icon: "calendar.circle.fill",
+                                color: .blue
+                            )
+                            .frame(maxWidth: .infinity)
+                        }
+                        
+                        if data.monthlyRemaining != nil {
+                            StatBox(
+                                title: "Remaining",
+                                value: data.displayMonthlyRemaining,
+                                icon: "checkmark.circle.fill",
+                                color: .green
+                            )
+                            .frame(maxWidth: .infinity)
+                        }
+                    }
+                    
+                    // Monthly progress bar
+                    if data.monthlyTotal != nil && data.monthlyTotal! > 0 {
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack {
+                                Text("Monthly Usage")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                                Spacer()
+                                Text("\(Int(data.monthlyUsagePercentage))%")
+                                    .font(.caption2)
+                                    .fontWeight(.medium)
+                                    .foregroundColor(monthlyUsageColor)
+                            }
+                            
+                            GeometryReader { geo in
+                                ZStack(alignment: .leading) {
+                                    RoundedRectangle(cornerRadius: 2)
+                                        .fill(Color.gray.opacity(0.15))
+                                        .frame(height: 4)
+                                    
+                                    RoundedRectangle(cornerRadius: 2)
+                                        .fill(monthlyUsageGradient)
+                                        .frame(width: geo.size.width * CGFloat(min(data.monthlyUsagePercentage / 100, 1.0)), height: 4)
+                                }
+                            }
+                            .frame(height: 4)
+                        }
+                    }
+                    
+                    // Monthly refresh time
+                    if let monthlyRefresh = data.monthlyRefreshTime ?? data.nextRefreshTime {
+                        HStack(spacing: 4) {
+                            Image(systemName: "calendar.badge.clock")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                            
+                            Text("Resets: \(formattedDate(monthlyRefresh))")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                            
+                            if let countdown = countdownString(for: monthlyRefresh) {
+                                Text("(\(countdown))")
+                                    .font(.caption2)
+                                    .fontWeight(.medium)
+                                    .foregroundColor(.blue)
+                            }
+                        }
+                    }
+                }
+                .padding(.top, 8)
+                .padding(.horizontal, 4)
+            }
+            
             // Refresh time
             if let refreshTime = data.refreshTime {
                 HStack(spacing: 6) {
@@ -422,7 +525,28 @@ struct UsageRowView: View {
             return .green
         case .openAI:
             return .teal
+        case .kimi:
+            return .indigo
         }
+    }
+    
+    private var monthlyUsageColor: Color {
+        if data.monthlyUsagePercentage > 90 {
+            return .red
+        } else if data.monthlyUsagePercentage > 70 {
+            return .orange
+        } else if data.monthlyUsagePercentage > 50 {
+            return .yellow
+        }
+        return .blue
+    }
+    
+    private var monthlyUsageGradient: LinearGradient {
+        LinearGradient(
+            colors: [monthlyUsageColor.opacity(0.8), monthlyUsageColor],
+            startPoint: .leading,
+            endPoint: .trailing
+        )
     }
     
     private var remainingColor: Color {

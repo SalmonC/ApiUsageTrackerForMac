@@ -40,6 +40,7 @@ A macOS menu bar application for tracking API usage quotas from various AI provi
 | **GLM (Zhipu AI)** | Subscription / Pay-As-You-Go | Auto-detects platform (open.bigmodel.cn / api.z.ai) |
 | **Tavily** | Credits | Search quota tracking |
 | **OpenAI** | Pay-As-You-Go | Usage and billing tracking |
+| **KIMI** | Monthly Quota | Moonshot AI usage tracking with monthly quota |
 
 #### UI/UX
 - **Collapsible Dashboard** - Expand/collapse accounts to see details
@@ -140,6 +141,7 @@ hdiutil create -srcfolder "$APP_PATH" -volname "ApiUsageTrackerForMac" -fs HFS+ 
 | **GLM (智谱AI)** | 订阅 / 按量付费 | 自动检测平台 (open.bigmodel.cn / api.z.ai) |
 | **Tavily** | 额度 | 搜索配额追踪 |
 | **OpenAI** | 按量付费 | 用量和账单追踪 |
+| **KIMI** | 月度额度 | Moonshot AI 用量追踪，支持月度额度 |
 
 #### 界面设计
 - **可折叠仪表盘** - 展开/折叠账户查看详情
@@ -218,6 +220,16 @@ hdiutil create -srcfolder "$APP_PATH" -volname "ApiUsageTrackerForMac" -fs HFS+ 
 ---
 
 ## Changelog / 更新日志
+
+### v1.3.0 (2026-02-25)
+- **New / 新增**: Add KIMI (Moonshot AI) support / 添加 KIMI (Moonshot) 支持
+  - Monthly quota tracking / 月度额度追踪
+  - Monthly usage statistics / 月度使用统计
+  - Refresh time display / 刷新时间显示
+- **Fix / 修复**: Improved GLM API data parsing with multiple fallback endpoints / 改进 GLM API 数据解析，添加多个备用端点
+- **Improve / 优化**: Popover height now adjusts when expanding/collapsing items / 点击展开/折叠时看板高度动态调整
+- **Improve / 优化**: Redesigned UsageService protocol with UsageResult struct / 重新设计 UsageService 协议，使用 UsageResult 结构体
+- **Improve / 优化**: Added monthly quota display for all providers / 为所有提供商添加月度额度显示
 
 ### v1.2.1 (2026-02-25)
 - **Fix / 修复**: GLM Token query returning 0 / GLM Token 余量查询返回 0 的问题

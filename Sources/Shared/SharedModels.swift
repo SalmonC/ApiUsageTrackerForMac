@@ -6,6 +6,7 @@ enum APIProvider: String, Codable, CaseIterable, Identifiable {
     case glm = "glm"
     case tavily = "tavily"
     case openAI = "openAI"
+    case kimi = "kimi"
     
     var id: String { rawValue }
     
@@ -19,6 +20,8 @@ enum APIProvider: String, Codable, CaseIterable, Identifiable {
             return "Tavily"
         case .openAI:
             return "OpenAI"
+        case .kimi:
+            return "KIMI (Moonshot)"
         }
     }
     
@@ -32,6 +35,8 @@ enum APIProvider: String, Codable, CaseIterable, Identifiable {
             return "magnifyingglass"
         case .openAI:
             return "sparkles"
+        case .kimi:
+            return "moon.stars"
         }
     }
 }
@@ -131,6 +136,13 @@ struct UsageData: Codable, Equatable {
     var lastUpdated: Date
     var errorMessage: String?
     
+    // Additional fields for monthly/limit data
+    var monthlyRemaining: Double?      // Monthly remaining quota
+    var monthlyTotal: Double?          // Monthly total quota
+    var monthlyUsed: Double?           // Monthly used amount
+    var monthlyRefreshTime: Date?      // Monthly quota refresh time
+    var nextRefreshTime: Date?         // Next refresh time (for limited periods)
+    
     var displayRemaining: String {
         guard let remaining = tokenRemaining else { return "--" }
         if remaining >= 1000 {
@@ -155,8 +167,37 @@ struct UsageData: Codable, Equatable {
         return String(format: "%.0f", total)
     }
     
+    var displayMonthlyRemaining: String {
+        guard let remaining = monthlyRemaining else { return "--" }
+        if remaining >= 1000 {
+            return String(format: "%.1fK", remaining / 1000)
+        }
+        return String(format: "%.0f", remaining)
+    }
+    
+    var displayMonthlyTotal: String {
+        guard let total = monthlyTotal else { return "--" }
+        if total >= 1000 {
+            return String(format: "%.1fK", total / 1000)
+        }
+        return String(format: "%.0f", total)
+    }
+    
+    var displayMonthlyUsed: String {
+        guard let used = monthlyUsed else { return "--" }
+        if used >= 1000 {
+            return String(format: "%.1fK", used / 1000)
+        }
+        return String(format: "%.0f", used)
+    }
+    
     var usagePercentage: Double {
         guard let used = tokenUsed, let total = tokenTotal, total > 0 else { return 0 }
+        return min(used / total * 100, 100)
+    }
+    
+    var monthlyUsagePercentage: Double {
+        guard let used = monthlyUsed, let total = monthlyTotal, total > 0 else { return 0 }
         return min(used / total * 100, 100)
     }
 }

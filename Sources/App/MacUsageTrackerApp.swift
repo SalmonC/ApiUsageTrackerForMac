@@ -57,6 +57,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Logger.log("Notification permission: \(granted)")
         }
         UNUserNotificationCenter.current().delegate = self
+        
+        // Listen for expand/collapse events to update popover size
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleExpansionChange),
+            name: .usageRowExpansionChanged,
+            object: nil
+        )
+    }
+    
+    @objc private func handleExpansionChange() {
+        // Delay slightly to allow animation to start
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            self?.updatePopoverSize()
+        }
     }
     
     private func checkLowUsageAndNotify() {
@@ -317,6 +332,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         
         let dataCount = max(viewModel.usageData.count, 1)
         let hasError = viewModel.usageData.contains { $0.errorMessage != nil }
+        let hasRefreshTime = viewModel.usageData.contains { $0.refreshTime != nil }
         
         // Base height for header and footer
         let headerHeight: CGFloat = 60
@@ -326,16 +342,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         
         // Calculate item height based on content
         let collapsedHeight: CGFloat = 65  // Compact view height
-        let expandedHeight: CGFloat = 140  // Expanded view height (with details)
+        let expandedHeight: CGFloat = 180  // Expanded view height (with details + padding)
         let errorExtraHeight: CGFloat = hasError ? 30 : 0  // Extra space for error messages
+        let refreshTimeHeight: CGFloat = hasRefreshTime ? 20 : 0
         
-        // Use adaptive height based on data count
-        let itemHeight = collapsedHeight + errorExtraHeight
-        let calculatedHeight = baseHeight + CGFloat(dataCount) * itemHeight + 20  // 20 for padding
+        // Use larger height to accommodate expanded rows
+        // We use expanded height for all items to ensure smooth transitions
+        let itemHeight = expandedHeight + errorExtraHeight + refreshTimeHeight
+        let calculatedHeight = baseHeight + CGFloat(dataCount) * itemHeight + 30  // 30 for padding
         
         // Apply min/max constraints
-        let maxHeight: CGFloat = 600
-        let minHeight: CGFloat = 200
+        let maxHeight: CGFloat = 700
+        let minHeight: CGFloat = 250
         let finalHeight = min(max(calculatedHeight, minHeight), maxHeight)
         
         if popover == nil {
