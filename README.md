@@ -95,6 +95,12 @@ hdiutil create -srcfolder "$APP_PATH" -volname "ApiUsageTrackerForMac" -fs HFS+ 
 
 ## Changelog
 
+### v1.1.1 (2026-02-25)
+- **Fix**: 修复 `startCountdownTimer` 内存泄漏问题（重复创建 Timer 未释放旧的）
+- **Fix**: 修复刷新间隔设置不即时生效的问题
+- **Fix**: 修复 Popover 重复创建导致的内存泄漏
+- **Fix**: Widget 刷新间隔现在跟随用户设置（不再是固定 5 分钟）
+
 ### v1.1.0 (2026-02-18)
 - **New**: Add Tavily API support for credit quota tracking
 - **New**: Auto-detect MiniMax API type (Coding Plan vs Pay-As-You-Go)

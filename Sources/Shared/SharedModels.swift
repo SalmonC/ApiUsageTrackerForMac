@@ -162,6 +162,7 @@ final class Storage {
     private let suiteName = "group.com.mactools.apiusagetracker"
     private let usageKey = "usageData"
     private let settingsKey = "appSettings"
+    private let refreshIntervalKey = "widgetRefreshInterval"
     
     private var userDefaults: UserDefaults? {
         UserDefaults(suiteName: suiteName)
@@ -199,5 +200,14 @@ final class Storage {
             return .default
         }
         return decoded
+    }
+    
+    // Save refresh interval separately for widget access
+    func saveRefreshInterval(_ minutes: Int) {
+        userDefaults?.set(minutes, forKey: refreshIntervalKey)
+    }
+    
+    func loadRefreshInterval() -> Int {
+        userDefaults?.integer(forKey: refreshIntervalKey) ?? 5
     }
 }

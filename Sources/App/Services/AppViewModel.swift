@@ -14,7 +14,9 @@ final class AppViewModel: ObservableObject {
     var onOpenSettings: (() -> Void)?
     
     init() {
+        loadSettings()
         loadCachedData()
+        Storage.shared.saveRefreshInterval(settings.refreshInterval)
         startCountdownTimer()
     }
     
@@ -30,8 +32,10 @@ final class AppViewModel: ObservableObject {
     }
     
     private func startCountdownTimer() {
-        updateTokenRefreshCountdown()
         refreshTimer?.invalidate()
+        refreshTimer = nil
+        
+        updateTokenRefreshCountdown()
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self = self else { return }
@@ -115,6 +119,7 @@ final class AppViewModel: ObservableObject {
     func saveSettings(_ newSettings: AppSettings) {
         settings = newSettings
         Storage.shared.saveSettings(newSettings)
+        Storage.shared.saveRefreshInterval(newSettings.refreshInterval)
         onSettingsSaved?()
     }
     

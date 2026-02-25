@@ -20,7 +20,8 @@ struct UsageProvider: TimelineProvider {
     func getTimeline(in context: Context, completion: @escaping (Timeline<UsageEntry>) -> Void) {
         let data = Storage.shared.loadUsageData()
         let entry = UsageEntry(date: Date(), usageData: data)
-        let nextUpdate = Calendar.current.date(byAdding: .minute, value: 5, to: Date())!
+        let refreshInterval = Storage.shared.loadRefreshInterval()
+        let nextUpdate = Calendar.current.date(byAdding: .minute, value: refreshInterval, to: Date())!
         let timeline = Timeline(entries: [entry], policy: .after(nextUpdate))
         completion(timeline)
     }

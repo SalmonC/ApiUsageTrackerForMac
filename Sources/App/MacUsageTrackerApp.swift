@@ -55,6 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 await self?.viewModel.refreshAll()
                 self?.updateGlobalHotKey()
                 self?.viewModel.resetCountdown()
+                self?.setupRefreshTimer()
             }
         }
         viewModel.onOpenSettings = { [weak self] in
@@ -272,12 +273,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let calculatedHeight = baseHeight + CGFloat(max(enabledAccounts, 1)) * itemHeight
         let finalHeight = min(max(calculatedHeight, minHeight), maxHeight)
         
-        popover = NSPopover()
+        if popover == nil {
+            popover = NSPopover()
+            popover?.behavior = .transient
+            popover?.contentViewController = NSHostingController(
+                rootView: MainView(viewModel: viewModel)
+            )
+        }
         popover?.contentSize = NSSize(width: 320, height: finalHeight)
-        popover?.behavior = .transient
-        popover?.contentViewController = NSHostingController(
-            rootView: MainView(viewModel: viewModel)
-        )
     }
     
     private func setupRefreshTimer() {
