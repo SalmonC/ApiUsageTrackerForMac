@@ -20,6 +20,7 @@ A macOS menu bar application for tracking API usage quotas from various AI provi
 | **MiniMax** | Coding Plan / Pay-As-You-Go | Auto-detects API type |
 | **GLM (智谱AI)** | Subscription / Pay-As-You-Go | Auto-detects platform (open.bigmodel.cn / api.z.ai) |
 | **Tavily** | Credits | Search quota tracking |
+| **OpenAI** | Pay-As-You-Go | Usage and billing tracking |
 
 ### UI/UX
 - **Collapsible Dashboard** - Expand/collapse accounts to see details
@@ -94,6 +95,13 @@ hdiutil create -srcfolder "$APP_PATH" -volname "ApiUsageTrackerForMac" -fs HFS+ 
 - **Global Hotkey**: Default is `⌘⇧Space` (configurable in Settings)
 
 ## Changelog
+
+### v1.2.0 (2026-02-25)
+- **New**: Add OpenAI API support for usage and billing tracking
+- **New**: API Key storage migrated to Keychain for better security
+- **New**: Add "Test Connection" button in settings to verify API keys
+- **New**: System notifications when API usage exceeds 80% or 90%
+- **Improve**: Optimized Logger with buffered writes (reduces file I/O)
 
 ### v1.1.1 (2026-02-25)
 - **Fix**: 修复 `startCountdownTimer` 内存泄漏问题（重复创建 Timer 未释放旧的）

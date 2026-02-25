@@ -1,6 +1,7 @@
 import SwiftUI
 import ServiceManagement
 import Carbon
+import UserNotifications
 
 @main
 struct ApiUsageTrackerForMacApp: App {
@@ -41,11 +42,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setupAppActivateObserver()
         setupRefreshTimer()
         setupSettingsCallback()
+        setupNotifications()
         
         NSApp.setActivationPolicy(.accessory)
         
         Task {
             await viewModel.refreshAll()
+        }
+    }
+    
+    private func setupNotifications() {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, _ in
+            Logger.log("Notification permission: \(granted)")
+        }
+        UNUserNotificationCenter.current().delegate = self
+    }
+    
+    private func checkLowUsageAndNotify() {
+        for data in viewModel.usageData {
+            guard let total = data.tokenTotal, total > 0 else { continue }
+            let percentage = data.usagePercentage
+            
+            if percentage > 90 {
+                sendNotification(
+                    title: "⚠️ API Usage Alert",
+                    body: "\(data.accountName) has used \(Int(percentage))% of quota"
+                )
+            } else if percentage > 80 {
+                sendNotification(
+                    title: "📊 API Usage Warning",
+                    body: "\(data.accountName) has used \(Int(percentage))% of quota"
+                )
+            }
+        }
+    }
+    
+    private func sendNotification(title: String, body: String) {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
+        
+        let request = UNNotificationRequest(
+            identifier: UUID().uuidString,
+            content: content,
+            trigger: nil
+        )
+        
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error = error {
+                Logger.log("Failed to send notification: \(error)")
+            }
         }
     }
     
@@ -289,6 +336,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         refreshTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 await self?.viewModel.refreshAll()
+                self?.checkLowUsageAndNotify()
             }
         }
     }
@@ -304,5 +352,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let observer = appActivateObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
         }
+    }
+}
+
+extension AppDelegate: UNUserNotificationCenterDelegate {
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .sound])
     }
 }

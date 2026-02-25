@@ -12,9 +12,11 @@
 		75302147951E22D6A38C4EA3 /* MiniMaxService.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF6096690722C92957C3D20B /* MiniMaxService.swift */; };
 		8E0EC68197844D01FD823D84 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C9CD75A9EE1CA102F828EAF /* SettingsView.swift */; };
 		8F4170DA7AC40592349FAD58 /* UsageWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB8F3E644DAA9E6A7DAE3671 /* UsageWidget.swift */; };
+		9B2678664A422CCA54964CAF /* KeychainManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3C7A4E6F4457D8C76980ADD /* KeychainManager.swift */; };
 		BAFDF737F3AA15CB4135459F /* MainView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5778A959BCC4A1A91986E98 /* MainView.swift */; };
 		BB82017101EB0C005F18FB10 /* AppViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7489D4F3FE30134FA1FFE58 /* AppViewModel.swift */; };
 		BD0C01256AD90323EA278935 /* MacUsageTrackerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8892B5835F6801D9232A56D4 /* MacUsageTrackerApp.swift */; };
+		C2E04D03794285361ACD4A40 /* KeychainManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3C7A4E6F4457D8C76980ADD /* KeychainManager.swift */; };
 		CC3DD365C7161D8DFC3C7B5B /* MiniMaxService.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF6096690722C92957C3D20B /* MiniMaxService.swift */; };
 		EE41413CCC8B536A7065DD9C /* SharedModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F3BE82DBDF7BDA7FBF833C5 /* SharedModels.swift */; };
 /* End PBXBuildFile section */
@@ -56,6 +58,7 @@
 		D5778A959BCC4A1A91986E98 /* MainView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainView.swift; sourceTree = "<group>"; };
 		DF6096690722C92957C3D20B /* MiniMaxService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MiniMaxService.swift; sourceTree = "<group>"; };
 		E38E7BA76C378B83321F9903 /* ApiUsageTrackerForMac.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ApiUsageTrackerForMac.entitlements; sourceTree = "<group>"; };
+		F3C7A4E6F4457D8C76980ADD /* KeychainManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainManager.swift; sourceTree = "<group>"; };
 		F6E7B49F6EFDBFE6E3C7A42D /* UsageWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = UsageWidget.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -95,6 +98,7 @@
 		3FE62FDB61BEDC9F6FF3B7AA /* Shared */ = {
 			isa = PBXGroup;
 			children = (
+				F3C7A4E6F4457D8C76980ADD /* KeychainManager.swift */,
 				DF6096690722C92957C3D20B /* MiniMaxService.swift */,
 				3F3BE82DBDF7BDA7FBF833C5 /* SharedModels.swift */,
 			);
@@ -227,6 +231,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				9B2678664A422CCA54964CAF /* KeychainManager.swift in Sources */,
 				75302147951E22D6A38C4EA3 /* MiniMaxService.swift in Sources */,
 				EE41413CCC8B536A7065DD9C /* SharedModels.swift in Sources */,
 				8F4170DA7AC40592349FAD58 /* UsageWidget.swift in Sources */,
@@ -238,6 +243,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				BB82017101EB0C005F18FB10 /* AppViewModel.swift in Sources */,
+				C2E04D03794285361ACD4A40 /* KeychainManager.swift in Sources */,
 				BD0C01256AD90323EA278935 /* MacUsageTrackerApp.swift in Sources */,
 				BAFDF737F3AA15CB4135459F /* MainView.swift in Sources */,
 				CC3DD365C7161D8DFC3C7B5B /* MiniMaxService.swift in Sources */,

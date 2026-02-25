@@ -5,6 +5,7 @@ enum APIProvider: String, Codable, CaseIterable, Identifiable {
     case miniMax = "miniMax"
     case glm = "glm"
     case tavily = "tavily"
+    case openAI = "openAI"
     
     var id: String { rawValue }
     
@@ -16,6 +17,8 @@ enum APIProvider: String, Codable, CaseIterable, Identifiable {
             return "GLM (智谱AI)"
         case .tavily:
             return "Tavily"
+        case .openAI:
+            return "OpenAI"
         }
     }
     
@@ -27,6 +30,8 @@ enum APIProvider: String, Codable, CaseIterable, Identifiable {
             return "cpu"
         case .tavily:
             return "magnifyingglass"
+        case .openAI:
+            return "sparkles"
         }
     }
 }
@@ -188,7 +193,25 @@ final class Storage {
     
     func saveSettings(_ settings: AppSettings) {
         guard let defaults = userDefaults else { return }
-        if let encoded = try? JSONEncoder().encode(settings) {
+        
+        // Save API keys to Keychain
+        for account in settings.accounts {
+            if !account.apiKey.isEmpty {
+                do {
+                    try KeychainManager.shared.saveAPIKey(account.apiKey, for: account.id)
+                } catch {
+                    Logger.log("Failed to save API key to Keychain: \(error)")
+                }
+            }
+        }
+        
+        // Save settings without API keys to UserDefaults
+        var settingsWithoutKeys = settings
+        for i in settingsWithoutKeys.accounts.indices {
+            settingsWithoutKeys.accounts[i].apiKey = ""
+        }
+        
+        if let encoded = try? JSONEncoder().encode(settingsWithoutKeys) {
             defaults.set(encoded, forKey: settingsKey)
         }
     }
@@ -196,9 +219,17 @@ final class Storage {
     func loadSettings() -> AppSettings {
         guard let defaults = userDefaults,
               let data = defaults.data(forKey: settingsKey),
-              let decoded = try? JSONDecoder().decode(AppSettings.self, from: data) else {
+              var decoded = try? JSONDecoder().decode(AppSettings.self, from: data) else {
             return .default
         }
+        
+        // Load API keys from Keychain
+        for i in decoded.accounts.indices {
+            if let keychainKey = KeychainManager.shared.loadAPIKey(for: decoded.accounts[i].id) {
+                decoded.accounts[i].apiKey = keychainKey
+            }
+        }
+        
         return decoded
     }
     

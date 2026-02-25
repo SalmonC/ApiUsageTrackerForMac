@@ -234,6 +234,13 @@ struct SettingsView: View {
     private func deleteAccount(_ account: APIAccount) {
         accounts.removeAll { $0.id == account.id }
         expandedStates.removeValue(forKey: account.id)
+        
+        // Delete API key from Keychain
+        do {
+            try KeychainManager.shared.deleteAPIKey(for: account.id)
+        } catch {
+            Logger.log("Failed to delete API key from Keychain: \(error)")
+        }
     }
     
     private func collapseAllAccounts() {
@@ -307,6 +314,8 @@ struct AccountRowView: View {
                     
                     SecureField("API Key", text: $account.apiKey)
                         .textFieldStyle(.roundedBorder)
+                    
+                    TestConnectionButton(account: account)
                 }
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
@@ -364,5 +373,110 @@ class KeyRecorderNSView: NSView {
         guard modifiers != 0 else { return }
         
         onKeyRecorded?(UInt16(event.keyCode), UInt32(modifiers))
+    }
+}
+
+struct TestConnectionButton: View {
+    let account: APIAccount
+    @State private var isTesting = false
+    @State private var testResult: TestResult?
+    
+    enum TestResult {
+        case success(String)
+        case failure(String)
+    }
+    
+    var body: some View {
+        HStack {
+            Button(action: testConnection) {
+                HStack(spacing: 4) {
+                    if isTesting {
+                        ProgressView()
+                            .scaleEffect(0.6)
+                            .frame(width: 16, height: 16)
+                    } else if let result = testResult {
+                        Image(systemName: iconForResult(result))
+                            .foregroundColor(colorForResult(result))
+                    } else {
+                        Image(systemName: "network")
+                    }
+                    Text(buttonText)
+                        .font(.caption)
+                }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .disabled(isTesting || account.apiKey.isEmpty)
+            
+            if let result = testResult {
+                Text(messageForResult(result))
+                    .font(.caption)
+                    .foregroundColor(colorForResult(result))
+                    .lineLimit(1)
+            }
+        }
+    }
+    
+    private var buttonText: String {
+        if isTesting {
+            return "Testing..."
+        } else if testResult != nil {
+            return "Test Again"
+        }
+        return "Test Connection"
+    }
+    
+    private func testConnection() {
+        guard !account.apiKey.isEmpty else { return }
+        
+        isTesting = true
+        testResult = nil
+        
+        Task {
+            let service = getService(for: account.provider)
+            do {
+                let result = try await service.fetchUsage(apiKey: account.apiKey)
+                await MainActor.run {
+                    if result.remaining != nil || result.used != nil {
+                        testResult = .success("Connection successful!")
+                    } else {
+                        testResult = .failure("Invalid response from API")
+                    }
+                    isTesting = false
+                }
+            } catch {
+                await MainActor.run {
+                    testResult = .failure(error.localizedDescription)
+                    isTesting = false
+                }
+            }
+        }
+    }
+    
+    private func iconForResult(_ result: TestResult) -> String {
+        switch result {
+        case .success:
+            return "checkmark.circle.fill"
+        case .failure:
+            return "xmark.circle.fill"
+        }
+    }
+    
+    private func colorForResult(_ result: TestResult) -> Color {
+        switch result {
+        case .success:
+            return .green
+        case .failure:
+            return .red
+        }
+    }
+    
+    private func messageForResult(_ result: TestResult) -> String {
+        switch result {
+        case .success(let msg):
+            return msg
+        case .failure(let msg):
+            return msg
+        }
     }
 }

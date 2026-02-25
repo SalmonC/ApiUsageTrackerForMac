@@ -1,28 +1,76 @@
 import Foundation
 
-enum Logger {
+final class Logger {
+    static let shared = Logger()
+    
+    private var logBuffer: [String] = []
+    private let bufferSize = 10
+    private let flushInterval: TimeInterval = 30
+    private var flushTimer: Timer?
+    private let logQueue = DispatchQueue(label: "com.mactools.apiusagetracker.logger", qos: .utility)
+    private let logFile: URL?
+    
+    private init() {
+        logFile = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?.appendingPathComponent("api_tracker.log")
+        startFlushTimer()
+    }
+    
+    deinit {
+        flushTimer?.invalidate()
+        flushBuffer()
+    }
+    
     static func log(_ message: String) {
         #if DEBUG
         print("[API Tracker] \(message)")
         #endif
         
-        let logFile = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?.appendingPathComponent("api_tracker.log")
+        let timestamp = ISO8601DateFormatter().string(from: Date())
+        let logMessage = "[\(timestamp)] \(message)"
         
-        if let logFile = logFile {
-            let timestamp = ISO8601DateFormatter().string(from: Date())
-            let logMessage = "[\(timestamp)] \(message)\n"
-            
-            if let data = logMessage.data(using: .utf8) {
-                if FileManager.default.fileExists(atPath: logFile.path) {
-                    if let handle = try? FileHandle(forWritingTo: logFile) {
-                        handle.seekToEndOfFile()
-                        handle.write(data)
-                        handle.closeFile()
-                    }
-                } else {
-                    try? data.write(to: logFile)
-                }
+        shared.logQueue.async {
+            shared.logBuffer.append(logMessage)
+            if shared.logBuffer.count >= shared.bufferSize {
+                shared.flushBuffer()
             }
+        }
+    }
+    
+    private func log(_ message: String) {
+        logBuffer.append(message)
+        if logBuffer.count >= bufferSize {
+            flushBuffer()
+        }
+    }
+    
+    private func startFlushTimer() {
+        flushTimer = Timer.scheduledTimer(withTimeInterval: flushInterval, repeats: true) { [weak self] _ in
+            self?.logQueue.async {
+                self?.flushBuffer()
+            }
+        }
+    }
+    
+    private func flushBuffer() {
+        guard !logBuffer.isEmpty, let logFile = logFile else { return }
+        
+        let messages = logBuffer.joined(separator: "\n") + "\n"
+        logBuffer.removeAll()
+        
+        guard let data = messages.data(using: .utf8) else { return }
+        
+        do {
+            if FileManager.default.fileExists(atPath: logFile.path) {
+                if let handle = try? FileHandle(forWritingTo: logFile) {
+                    handle.seekToEndOfFile()
+                    handle.write(data)
+                    handle.closeFile()
+                }
+            } else {
+                try data.write(to: logFile)
+            }
+        } catch {
+            print("[Logger] Failed to write to log file: \(error)")
         }
     }
 }
@@ -404,6 +452,113 @@ final class TavilyService: UsageService {
     }
 }
 
+final class OpenAIService: UsageService {
+    let provider: APIProvider = .openAI
+    
+    func fetchUsage(apiKey: String) async throws -> (remaining: Double?, used: Double?, total: Double?, refreshTime: Date?) {
+        guard !apiKey.isEmpty else {
+            throw APIError.noAPIKey
+        }
+        
+        // OpenAI doesn't have a public usage API, so we check billing/subscription info
+        guard let url = URL(string: "https://api.openai.com/v1/dashboard/billing/subscription") else {
+            throw APIError.invalidURL
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 15
+        
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw APIError.invalidResponse
+            }
+            
+            Logger.log("OpenAI API: HTTP \(httpResponse.statusCode)")
+            
+            if httpResponse.statusCode == 401 {
+                throw APIError.httpErrorWithMessage(401, "Invalid API Key")
+            }
+            
+            if httpResponse.statusCode != 200 {
+                throw APIError.httpError(httpResponse.statusCode)
+            }
+            
+            // Try to parse subscription info
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                Logger.log("OpenAI Response: \(json)")
+                
+                var total: Double = 0
+                var used: Double = 0
+                var remaining: Double = 0
+                
+                // Parse hard_limit_usd (total limit)
+                if let hardLimit = json["hard_limit_usd"] as? Double {
+                    total = hardLimit
+                }
+                
+                // Get usage for current month
+                if let usage = try? await fetchUsageForCurrentMonth(apiKey: apiKey) {
+                    used = usage
+                    remaining = max(0, total - used)
+                }
+                
+                Logger.log("OpenAI API Success: remaining=\(remaining), used=\(used), total=\(total)")
+                return (remaining: remaining, used: used, total: total, refreshTime: nil)
+            }
+            
+            throw APIError.decodingError(NSError(domain: "", code: 0))
+        } catch let error as APIError {
+            throw error
+        } catch {
+            Logger.log("OpenAI API Error: \(error.localizedDescription)")
+            throw APIError.networkError(error)
+        }
+    }
+    
+    private func fetchUsageForCurrentMonth(apiKey: String) async throws -> Double {
+        let calendar = Calendar.current
+        let now = Date()
+        let startOfMonth = calendar.date(from: calendar.dateComponents([.year, .month], from: now))!
+        let endOfMonth = calendar.date(byAdding: DateComponents(month: 1, day: -1), to: startOfMonth)!
+        
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd"
+        
+        let startDate = dateFormatter.string(from: startOfMonth)
+        let endDate = dateFormatter.string(from: endOfMonth)
+        
+        guard let url = URL(string: "https://api.openai.com/v1/dashboard/billing/usage?start_date=\(startDate)&end_date=\(endDate)") else {
+            return 0
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 15
+        
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let totalUsage = json["total_usage"] as? Double else {
+                return 0
+            }
+            
+            // Convert from cents to dollars
+            return totalUsage / 100.0
+        } catch {
+            return 0
+        }
+    }
+}
+
 func getService(for provider: APIProvider) -> UsageService {
     switch provider {
     case .miniMax:
@@ -412,5 +567,7 @@ func getService(for provider: APIProvider) -> UsageService {
         return GLMService()
     case .tavily:
         return TavilyService()
+    case .openAI:
+        return OpenAIService()
     }
 }
