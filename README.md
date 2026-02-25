@@ -219,6 +219,16 @@ hdiutil create -srcfolder "$APP_PATH" -volname "ApiUsageTrackerForMac" -fs HFS+ 
 
 ## Changelog / 更新日志
 
+### v1.2.1 (2026-02-25)
+- **Fix / 修复**: GLM Token query returning 0 / GLM Token 余量查询返回 0 的问题
+  - Added user info API as primary source / 添加 user info API 作为主要数据来源
+  - Improved number parsing for various formats / 改进多种格式的数字解析
+- **New / 新增**: Dynamic popover height adjustment / 看板高度根据内容实时调整
+  - Height adapts to data count and content / 高度根据数据量和内容自适应
+- **Improve / 优化**: Redesigned collapsed/expanded view / 重新设计折叠/展开视图
+  - Collapsed: Compact with mini progress ring / 折叠：紧凑布局带迷你进度环
+  - Expanded: Detailed stats grid with visual hierarchy / 展开：详细统计网格和视觉层级
+
 ### v1.2.0 (2026-02-25)
 - **New / 新增**: Add OpenAI API support / 添加 OpenAI API 支持
 - **New / 新增**: API Key storage migrated to Keychain / API Key 迁移到钥匙串存储

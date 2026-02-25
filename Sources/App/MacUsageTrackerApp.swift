@@ -48,6 +48,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         
         Task {
             await viewModel.refreshAll()
+            updatePopoverSize()  // Update height after initial data load
         }
     }
     
@@ -100,6 +101,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         viewModel.onSettingsSaved = { [weak self] in
             Task { @MainActor in
                 await self?.viewModel.refreshAll()
+                self?.updatePopoverSize()  // Update height after settings change
                 self?.updateGlobalHotKey()
                 self?.viewModel.resetCountdown()
                 self?.setupRefreshTimer()
@@ -253,8 +255,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     @objc private func refreshAction() {
-        Task {
+        Task { @MainActor in
             await viewModel.refreshAll()
+            updatePopoverSize()  // Update height after refresh
         }
     }
     
@@ -311,13 +314,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     
     private func updatePopoverSize() {
         viewModel.loadSettings()
-        let enabledAccounts = viewModel.settings.accounts.filter { $0.isEnabled }.count
-        let baseHeight: CGFloat = 120
-        let itemHeight: CGFloat = 100
-        let maxHeight: CGFloat = 500
-        let minHeight: CGFloat = 200
         
-        let calculatedHeight = baseHeight + CGFloat(max(enabledAccounts, 1)) * itemHeight
+        let dataCount = max(viewModel.usageData.count, 1)
+        let hasError = viewModel.usageData.contains { $0.errorMessage != nil }
+        
+        // Base height for header and footer
+        let headerHeight: CGFloat = 60
+        let footerHeight: CGFloat = 40
+        let dividerHeight: CGFloat = 2
+        let baseHeight = headerHeight + footerHeight + dividerHeight * 2
+        
+        // Calculate item height based on content
+        let collapsedHeight: CGFloat = 65  // Compact view height
+        let expandedHeight: CGFloat = 140  // Expanded view height (with details)
+        let errorExtraHeight: CGFloat = hasError ? 30 : 0  // Extra space for error messages
+        
+        // Use adaptive height based on data count
+        let itemHeight = collapsedHeight + errorExtraHeight
+        let calculatedHeight = baseHeight + CGFloat(dataCount) * itemHeight + 20  // 20 for padding
+        
+        // Apply min/max constraints
+        let maxHeight: CGFloat = 600
+        let minHeight: CGFloat = 200
         let finalHeight = min(max(calculatedHeight, minHeight), maxHeight)
         
         if popover == nil {
@@ -327,7 +345,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 rootView: MainView(viewModel: viewModel)
             )
         }
-        popover?.contentSize = NSSize(width: 320, height: finalHeight)
+        
+        // Animate size change if popover is visible
+        if let popover = popover, popover.isShown {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.2
+                popover.contentSize = NSSize(width: 320, height: finalHeight)
+            }
+        } else {
+            popover?.contentSize = NSSize(width: 320, height: finalHeight)
+        }
+        
+        Logger.log("Popover size updated: \(finalHeight)px for \(dataCount) items")
     }
     
     private func setupRefreshTimer() {
@@ -336,6 +365,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         refreshTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 await self?.viewModel.refreshAll()
+                self?.updatePopoverSize()  // Update height after data changes
                 self?.checkLowUsageAndNotify()
             }
         }

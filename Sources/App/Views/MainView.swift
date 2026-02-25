@@ -81,7 +81,7 @@ struct MainView: View {
     
     private var usageListView: some View {
         ScrollView {
-            LazyVStack(spacing: 8) {
+            LazyVStack(spacing: 10) {
                 ForEach(viewModel.usageData, id: \.accountId) { data in
                     UsageRowView(data: data, onRetry: {
                         Task {
@@ -91,6 +91,7 @@ struct MainView: View {
                 }
             }
             .padding(.horizontal)
+            .padding(.vertical, 8)
         }
     }
     
@@ -141,213 +142,320 @@ struct UsageRowView: View {
     @State private var isExpanded: Bool = false
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
+        VStack(alignment: .leading, spacing: 0) {
+            // Header row - always visible
+            HStack(spacing: 10) {
+                // Expand/collapse button
                 Button(action: {
-                    withAnimation(.easeInOut(duration: 0.2)) {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                         isExpanded.toggle()
                     }
                 }) {
-                    HStack(spacing: 8) {
-                        Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(.secondary)
-                            .frame(width: 20, height: 20)
-                        
-                        Image(systemName: data.provider.icon)
-                            .foregroundColor(.blue)
-                        Text(data.accountName)
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-                    }
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.secondary)
+                        .frame(width: 20, height: 20)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 
-                Spacer()
+                // Provider icon
+                ZStack {
+                    Circle()
+                        .fill(providerColor.opacity(0.15))
+                        .frame(width: 32, height: 32)
+                    Image(systemName: data.provider.icon)
+                        .font(.system(size: 14))
+                        .foregroundColor(providerColor)
+                }
                 
-                compactInfoView
+                // Account name
+                Text(data.accountName)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .lineLimit(1)
+                
+                Spacer(minLength: 8)
+                
+                // Status indicator (right side)
+                statusIndicator
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(headerBackground)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    isExpanded.toggle()
+                }
             }
             
-            if !isExpanded {
-                collapsedInfoView
-            } else {
+            // Expandable content
+            if isExpanded {
                 expandedContent
-                    .transition(.opacity.combined(with: .move(edge: .top)))
+                    .transition(.asymmetric(
+                        insertion: .opacity.combined(with: .move(edge: .top)),
+                        removal: .opacity
+                    ))
             }
         }
-        .padding()
-        .background(Color.gray.opacity(0.05))
-        .cornerRadius(8)
+        .background(Color(NSColor.controlBackgroundColor))
+        .cornerRadius(10)
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(borderColor, lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.03), radius: 2, x: 0, y: 1)
     }
     
+    // MARK: - Header Components
+    
     @ViewBuilder
-    private var compactInfoView: some View {
+    private var statusIndicator: some View {
         if let error = data.errorMessage {
             Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundColor(.red)
+                .foregroundColor(.orange)
+                .font(.system(size: 14))
                 .help(error)
         } else if let remaining = data.tokenRemaining {
-            VStack(alignment: .trailing, spacing: 0) {
-                Text(data.displayRemaining)
-                    .font(.system(.subheadline, design: .monospaced))
-                    .fontWeight(.semibold)
-                    .foregroundColor(remainingColor)
-                if data.tokenTotal != nil {
-                    Text(String(format: "%.0f%%", data.usagePercentage))
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
+            HStack(spacing: 6) {
+                // Mini progress ring
+                if data.tokenTotal != nil && data.tokenTotal! > 0 {
+                    ZStack {
+                        Circle()
+                            .stroke(Color.gray.opacity(0.2), lineWidth: 3)
+                            .frame(width: 20, height: 20)
+                        Circle()
+                            .trim(from: 0, to: CGFloat(min(data.usagePercentage / 100, 1.0)))
+                            .stroke(usageColor, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                            .frame(width: 20, height: 20)
+                            .rotationEffect(.degrees(-90))
+                    }
                 }
+                
+                VStack(alignment: .trailing, spacing: 0) {
+                    Text(data.displayRemaining)
+                        .font(.system(.subheadline, design: .rounded))
+                        .fontWeight(.semibold)
+                        .foregroundColor(remainingColor)
+                    
+                    if data.tokenTotal != nil {
+                        Text("\(Int(data.usagePercentage))% used")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+        } else {
+            Text("--")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+        }
+    }
+    
+    private var headerBackground: some View {
+        Group {
+            if isExpanded {
+                Color.blue.opacity(0.05)
+            } else {
+                Color.clear
             }
         }
     }
     
-    @ViewBuilder
-    private var collapsedInfoView: some View {
-        HStack(spacing: 16) {
-            if let used = data.tokenUsed {
-                HStack(spacing: 4) {
-                    Text("Used:")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    Text(data.displayUsed)
-                        .font(.system(.caption, design: .monospaced))
-                        .fontWeight(.medium)
-                }
-            }
-            
-            if let total = data.tokenTotal {
-                HStack(spacing: 4) {
-                    Text("Total:")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    Text(data.displayTotal)
-                        .font(.system(.caption, design: .monospaced))
-                        .fontWeight(.medium)
-                }
-            }
-            
-            Spacer()
-            
-            if data.tokenTotal != nil {
-                HStack(spacing: 6) {
-                    ProgressView(value: data.usagePercentage, total: 100)
-                        .frame(width: 60)
-                        .tint(usageColor)
-                    Text(String(format: "%.0f%%", data.usagePercentage))
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .frame(width: 35, alignment: .trailing)
-                }
-            }
+    private var borderColor: Color {
+        if isExpanded {
+            return Color.blue.opacity(0.3)
         }
-        .padding(.top, 4)
+        return Color.gray.opacity(0.15)
     }
+    
+    // MARK: - Expanded Content
     
     @ViewBuilder
     private var expandedContent: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(spacing: 0) {
+            Divider()
+                .padding(.horizontal, 12)
+            
             if let error = data.errorMessage {
-                errorContent(error)
+                errorSection(error)
             } else {
-                normalContent
+                detailsSection
             }
         }
-        .padding(.top, 8)
+        .padding(.bottom, 12)
     }
     
     @ViewBuilder
-    private func errorContent(_ error: String) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+    private func errorSection(_ error: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundColor(.red)
+                    .foregroundColor(.orange)
+                    .font(.system(size: 16))
+                
                 Text(error)
                     .font(.caption)
-                    .foregroundColor(.red)
+                    .foregroundColor(.primary)
                     .lineLimit(2)
+                
+                Spacer()
             }
             
             if let onRetry = onRetry {
                 Button(action: onRetry) {
                     HStack(spacing: 4) {
                         Image(systemName: "arrow.clockwise")
+                            .font(.caption)
                         Text("Retry")
+                            .font(.caption)
                     }
-                    .font(.caption)
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
             }
         }
+        .padding(.horizontal, 12)
+        .padding(.top, 12)
     }
     
     @ViewBuilder
-    private var normalContent: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 20) {
+    private var detailsSection: some View {
+        VStack(spacing: 12) {
+            // Stats grid
+            HStack(spacing: 0) {
                 if data.tokenUsed != nil {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Used")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                        Text(data.displayUsed)
-                            .font(.system(.body, design: .monospaced))
-                            .fontWeight(.medium)
-                    }
+                    StatBox(
+                        title: "Used",
+                        value: data.displayUsed,
+                        icon: "arrow.down.circle",
+                        color: .orange
+                    )
+                    .frame(maxWidth: .infinity)
                 }
                 
                 if data.tokenTotal != nil {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Total")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                        Text(data.displayTotal)
-                            .font(.system(.body, design: .monospaced))
-                            .fontWeight(.medium)
-                    }
+                    StatBox(
+                        title: "Total",
+                        value: data.displayTotal,
+                        icon: "circle.grid.2x2",
+                        color: .blue
+                    )
+                    .frame(maxWidth: .infinity)
                 }
                 
-                Spacer()
-            }
-            
-            if data.tokenUsed != nil && data.tokenTotal != nil {
-                HStack(spacing: 8) {
-                    ProgressView(value: data.usagePercentage, total: 100)
-                        .tint(usageColor)
-                    Text(String(format: "%.0f%%", data.usagePercentage))
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .frame(width: 40, alignment: .trailing)
+                if data.tokenRemaining != nil {
+                    StatBox(
+                        title: "Remaining",
+                        value: data.displayRemaining,
+                        icon: "checkmark.circle",
+                        color: remainingColor
+                    )
+                    .frame(maxWidth: .infinity)
                 }
             }
             
+            // Progress bar
+            if data.tokenTotal != nil && data.tokenTotal! > 0 {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("Usage Progress")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Text("\(Int(data.usagePercentage))%")
+                            .font(.caption2)
+                            .fontWeight(.medium)
+                            .foregroundColor(usageColor)
+                    }
+                    
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            RoundedRectangle(cornerRadius: 3)
+                                .fill(Color.gray.opacity(0.15))
+                                .frame(height: 6)
+                            
+                            RoundedRectangle(cornerRadius: 3)
+                                .fill(usageGradient)
+                                .frame(width: geo.size.width * CGFloat(min(data.usagePercentage / 100, 1.0)), height: 6)
+                        }
+                    }
+                    .frame(height: 6)
+                }
+            }
+            
+            // Refresh time
             if let refreshTime = data.refreshTime {
-                HStack {
-                    Image(systemName: "clock")
+                HStack(spacing: 6) {
+                    Image(systemName: "clock.arrow.circlepath")
                         .font(.caption2)
+                        .foregroundColor(.secondary)
+                    
                     Text("Resets: \(formattedDate(refreshTime))")
                         .font(.caption2)
+                        .foregroundColor(.secondary)
+                    
                     if let countdown = countdownString(for: refreshTime) {
-                        Text("(\(countdown))")
+                        Text("(\(countdown) left)")
                             .font(.caption2)
+                            .fontWeight(.medium)
                             .foregroundColor(.blue)
                     }
                 }
-                .foregroundColor(.secondary)
+                .padding(.top, 4)
             }
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 12)
+    }
+    
+    // MARK: - Helpers
+    
+    private var providerColor: Color {
+        switch data.provider {
+        case .miniMax:
+            return .purple
+        case .glm:
+            return .blue
+        case .tavily:
+            return .green
+        case .openAI:
+            return .teal
         }
     }
     
     private var remainingColor: Color {
         if data.tokenTotal != nil && data.tokenTotal! > 0 {
             let pct = data.usagePercentage
-            if pct > 80 {
+            if pct > 90 {
                 return .red
-            } else if pct > 50 {
+            } else if pct > 70 {
                 return .orange
+            } else if pct > 50 {
+                return .yellow
             }
         }
         return .green
+    }
+    
+    private var usageColor: Color {
+        if data.usagePercentage > 90 {
+            return .red
+        } else if data.usagePercentage > 70 {
+            return .orange
+        } else if data.usagePercentage > 50 {
+            return .yellow
+        }
+        return .blue
+    }
+    
+    private var usageGradient: LinearGradient {
+        LinearGradient(
+            colors: [usageColor.opacity(0.8), usageColor],
+            startPoint: .leading,
+            endPoint: .trailing
+        )
     }
     
     private func countdownString(for refreshTime: Date) -> String? {
@@ -368,19 +476,41 @@ struct UsageRowView: View {
         }
     }
     
-    private var usageColor: Color {
-        if data.usagePercentage > 80 {
-            return .red
-        } else if data.usagePercentage > 50 {
-            return .orange
-        }
-        return .blue
-    }
-    
     private func formattedDate(_ date: Date) -> String {
         let formatter = DateFormatter()
         formatter.dateStyle = .short
         formatter.timeStyle = .short
         return formatter.string(from: date)
+    }
+}
+
+// MARK: - StatBox Component
+
+struct StatBox: View {
+    let title: String
+    let value: String
+    let icon: String
+    let color: Color
+    
+    var body: some View {
+        VStack(spacing: 6) {
+            HStack(spacing: 4) {
+                Image(systemName: icon)
+                    .font(.caption2)
+                    .foregroundColor(color)
+                Text(title)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+            
+            Text(value)
+                .font(.system(.callout, design: .rounded))
+                .fontWeight(.semibold)
+                .foregroundColor(.primary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 8)
+        .background(color.opacity(0.08))
+        .cornerRadius(8)
     }
 }
