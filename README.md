@@ -24,7 +24,7 @@ A macOS menu bar application for tracking API usage quotas from various AI provi
 
 #### Core Functionality
 - **Menu Bar Interface** - Quick access to API usage from the menu bar
-- **Desktop Widgets** - View usage on your desktop (small, medium, large sizes)
+- **Desktop Widgets** - View usage on your desktop (small, medium, large sizes; source retained, temporarily disabled in distribution builds)
 - **Auto Refresh** - Configurable automatic refresh interval (1-60 minutes)
 - **Global Hotkey** - Show/hide window with customizable keyboard shortcut
 - **Test Connection** - Verify API keys before saving
@@ -125,7 +125,7 @@ hdiutil create -srcfolder "$APP_PATH" -volname "ApiUsageTrackerForMac" -fs HFS+ 
 
 #### 核心功能
 - **菜单栏界面** - 从菜单栏快速查看 API 用量
-- **桌面小组件** - 在桌面上查看用量（小、中、大三种尺寸）
+- **桌面小组件** - 在桌面上查看用量（小、中、大三种尺寸；代码保留，分发构建中暂时关闭）
 - **自动刷新** - 可配置的自动刷新间隔（1-60 分钟）
 - **全局快捷键** - 可自定义的快捷键显示/隐藏窗口
 - **连接测试** - 保存前验证 API Key 是否有效
@@ -220,6 +220,11 @@ hdiutil create -srcfolder "$APP_PATH" -volname "ApiUsageTrackerForMac" -fs HFS+ 
 ---
 
 ## Changelog / 更新日志
+
+### v1.3.1 (2026-02-26)
+- **Change / 调整**: Temporarily disable desktop widget embedding in app distribution builds / 临时关闭应用分发构建中的桌面小组件嵌入
+  - Widget source code remains in repository for future re-enable / 仓库中保留小组件代码，后续可恢复
+  - Reason: App Group access may fail under Personal Team signing in local distribution/debugging / 原因：个人团队签名下本地分发/调试时 App Group 访问可能失败
 
 ### v1.3.0 (2026-02-25)
 - **New / 新增**: Add KIMI (Moonshot AI) support / 添加 KIMI (Moonshot) 支持

@@ -21,20 +21,6 @@
                ReferencedContainer = "container:ApiUsageTrackerForMac.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
-         <BuildActionEntry
-            buildForTesting = "YES"
-            buildForRunning = "YES"
-            buildForProfiling = "YES"
-            buildForArchiving = "YES"
-            buildForAnalyzing = "YES">
-            <BuildableReference
-               BuildableIdentifier = "primary"
-               BlueprintIdentifier = "04C859F8B778F67EBB79DD5B"
-               BuildableName = "UsageWidget.appex"
-               BlueprintName = "UsageWidget"
-               ReferencedContainer = "container:ApiUsageTrackerForMac.xcodeproj">
-            </BuildableReference>
-         </BuildActionEntry>
       </BuildActionEntries>
    </BuildAction>
    <TestAction

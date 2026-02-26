@@ -12,8 +12,6 @@ settings:
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_VERSION: "5.9"
     MACOSX_DEPLOYMENT_TARGET: "14.0"
-    CODE_SIGN_STYLE: Manual
-    CODE_SIGN_IDENTITY: "-"
     ENABLE_HARDENED_RUNTIME: NO
 
 targets:
@@ -38,11 +36,15 @@ targets:
         COMBINE_HIDPI_IMAGES: YES
         LSUIElement: YES
         GENERATE_INFOPLIST_FILE: NO
-        CODE_SIGNING_ALLOWED: NO
-    dependencies:
-      - target: UsageWidget
-        embed: true
-        codeSign: true
+      configs:
+        Debug:
+          CODE_SIGN_STYLE: Automatic
+        Release:
+          CODE_SIGN_STYLE: Manual
+          CODE_SIGN_IDENTITY: "-"
+          CODE_SIGNING_ALLOWED: NO
+    # Desktop widget target is kept in source, but temporarily not embedded in the app
+    # due App Group sandbox limitations during current distribution/debug workflow.
 
   UsageWidget:
     type: app-extension
@@ -62,14 +64,19 @@ targets:
         CODE_SIGN_ENTITLEMENTS: Sources/Widget/UsageWidget.entitlements
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks @executable_path/../../../../Frameworks"
         SKIP_INSTALL: YES
-        CODE_SIGNING_ALLOWED: NO
+      configs:
+        Debug:
+          CODE_SIGN_STYLE: Automatic
+        Release:
+          CODE_SIGN_STYLE: Manual
+          CODE_SIGN_IDENTITY: "-"
+          CODE_SIGNING_ALLOWED: NO
 
 schemes:
   ApiUsageTrackerForMac:
     build:
       targets:
         ApiUsageTrackerForMac: all
-        UsageWidget: all
     run:
       config: Debug
     archive:
