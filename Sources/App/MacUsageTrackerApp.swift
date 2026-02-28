@@ -36,16 +36,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var preferredPopoverContentHeight: CGFloat?
     private var pendingPopoverResizeWorkItem: DispatchWorkItem?
     private var pendingPopoverSize: NSSize?
-    private var isTrackingContentResizeAnimation = false
-    private var contentResizeAnimationEndTime: CFTimeInterval?
-    private let synchronizedContentResizeDuration: TimeInterval = 0.24
-    private var synchronizedPopoverResizeTimer: Timer?
-    private var synchronizedPopoverResizeStartTime: CFTimeInterval = 0
-    private var synchronizedPopoverResizeDuration: CFTimeInterval = 0
-    private var synchronizedPopoverResizeStartFrame: NSRect?
-    private var synchronizedPopoverResizeTargetFrame: NSRect?
-    private var synchronizedPopoverResizeTargetContentSize: NSSize?
-    private let synchronizedPopoverResizeFrameInterval: TimeInterval = 1.0 / 60.0
     private let storage = Storage.shared
     var viewModel = AppViewModel()
     
@@ -233,9 +223,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pendingPopoverResizeWorkItem?.cancel()
         pendingPopoverResizeWorkItem = nil
         pendingPopoverSize = nil
-        stopSynchronizedPopoverResize()
-        isTrackingContentResizeAnimation = false
-        contentResizeAnimationEndTime = nil
         popover?.performClose(nil)
     }
     
@@ -383,24 +370,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         Task { @MainActor in
                             self?.updatePopoverSize(preferredContentHeight: preferredHeight)
                         }
-                    },
-                    onExpansionAnimationPhaseChange: { [weak self] isAnimating in
-                        Task { @MainActor in
-                            guard let self else { return }
-                            let now = CACurrentMediaTime()
-                            if isAnimating {
-                                if self.isTrackingContentResizeAnimation {
-                                    let extendedEnd = now + self.synchronizedContentResizeDuration
-                                    self.contentResizeAnimationEndTime = max(self.contentResizeAnimationEndTime ?? 0, extendedEnd)
-                                } else {
-                                    self.isTrackingContentResizeAnimation = true
-                                    self.contentResizeAnimationEndTime = now + self.synchronizedContentResizeDuration
-                                }
-                            } else {
-                                self.isTrackingContentResizeAnimation = false
-                                self.contentResizeAnimationEndTime = nil
-                            }
-                        }
                     }
                 )
             )
@@ -420,7 +389,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             pendingPopoverResizeWorkItem?.cancel()
             pendingPopoverResizeWorkItem = nil
             pendingPopoverSize = nil
-            stopSynchronizedPopoverResize()
             popover.contentSize = newSize
             return
         }
@@ -431,16 +399,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        if isTrackingContentResizeAnimation {
-            pendingPopoverResizeWorkItem?.cancel()
-            pendingPopoverResizeWorkItem = nil
-            pendingPopoverSize = nil
-            applyPopoverSizeDuringContentAnimation(newSize, to: popover)
-            return
-        }
-
-        stopSynchronizedPopoverResize()
-        
         pendingPopoverSize = newSize
         pendingPopoverResizeWorkItem?.cancel()
         
@@ -480,116 +438,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         
         pendingPopoverResizeWorkItem = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.02, execute: work)
-    }
-
-    private func applyPopoverSizeImmediately(_ targetSize: NSSize, to popover: NSPopover) {
-        if let window = popover.contentViewController?.view.window {
-            let currentFrame = window.frame
-            let targetFrame = popoverFrame(forContentSize: targetSize, basedOn: currentFrame, in: window)
-            window.setFrame(targetFrame, display: true)
-        }
-        popover.contentSize = targetSize
-    }
-
-    private func applyPopoverSizeDuringContentAnimation(_ targetSize: NSSize, to popover: NSPopover) {
-        guard let window = popover.contentViewController?.view.window else {
-            applyPopoverSizeImmediately(targetSize, to: popover)
-            return
-        }
-
-        let now = CACurrentMediaTime()
-        let animationEnd = contentResizeAnimationEndTime ?? (now + synchronizedContentResizeDuration)
-        let remaining = max(animationEnd - now, 0.001)
-        let duration = min(max(remaining, 0.08), synchronizedContentResizeDuration)
-        let targetFrame = popoverFrame(forContentSize: targetSize, basedOn: window.frame, in: window)
-
-        if synchronizedPopoverResizeTimer == nil {
-            let timer = Timer(timeInterval: synchronizedPopoverResizeFrameInterval, repeats: true) { [weak self] _ in
-                MainActor.assumeIsolated {
-                    self?.stepSynchronizedPopoverResize()
-                }
-            }
-            timer.tolerance = 0
-            synchronizedPopoverResizeTimer = timer
-            RunLoop.main.add(timer, forMode: .common)
-        }
-
-        // Rebase every target update onto the current window frame so long rows
-        // do not keep stretching a single animation timeline and causing lag.
-        synchronizedPopoverResizeStartTime = now
-        synchronizedPopoverResizeDuration = duration
-        synchronizedPopoverResizeStartFrame = window.frame
-        synchronizedPopoverResizeTargetFrame = targetFrame
-        synchronizedPopoverResizeTargetContentSize = targetSize
-
-        // Apply the first interpolation step immediately to reduce one-tick latency.
-        stepSynchronizedPopoverResize()
-    }
-
-    private func stepSynchronizedPopoverResize() {
-        guard
-            let popover,
-            let window = popover.contentViewController?.view.window,
-            let startFrame = synchronizedPopoverResizeStartFrame,
-            let targetFrame = synchronizedPopoverResizeTargetFrame
-        else {
-            stopSynchronizedPopoverResize()
-            return
-        }
-
-        let duration = max(synchronizedPopoverResizeDuration, 0.08)
-        let elapsed = CACurrentMediaTime() - synchronizedPopoverResizeStartTime
-        let progress = min(max(elapsed / duration, 0), 1)
-        let easedProgress = easeInOutCubic(progress)
-        let frame = interpolatedFrame(from: startFrame, to: targetFrame, progress: easedProgress)
-        window.setFrame(frame, display: true)
-
-        if progress >= 1 {
-            if let targetSize = synchronizedPopoverResizeTargetContentSize {
-                popover.contentSize = targetSize
-            }
-            stopSynchronizedPopoverResize()
-        }
-    }
-
-    private func stopSynchronizedPopoverResize() {
-        synchronizedPopoverResizeTimer?.invalidate()
-        synchronizedPopoverResizeTimer = nil
-        synchronizedPopoverResizeStartTime = 0
-        synchronizedPopoverResizeDuration = 0
-        synchronizedPopoverResizeStartFrame = nil
-        synchronizedPopoverResizeTargetFrame = nil
-        synchronizedPopoverResizeTargetContentSize = nil
-    }
-
-    private func popoverFrame(forContentSize targetSize: NSSize, basedOn currentFrame: NSRect, in window: NSWindow) -> NSRect {
-        var targetContentRect = window.contentRect(forFrameRect: currentFrame)
-        targetContentRect.size = targetSize
-        var targetFrame = window.frameRect(forContentRect: targetContentRect)
-
-        // Keep the popover visually anchored to the menu bar by preserving top edge.
-        targetFrame.origin.y = currentFrame.maxY - targetFrame.height
-        targetFrame.origin.x = currentFrame.midX - (targetFrame.width / 2)
-        return targetFrame
-    }
-
-    private func interpolatedFrame(from start: NSRect, to end: NSRect, progress: CGFloat) -> NSRect {
-        let t = max(0, min(progress, 1))
-        return NSRect(
-            x: start.origin.x + (end.origin.x - start.origin.x) * t,
-            y: start.origin.y + (end.origin.y - start.origin.y) * t,
-            width: start.size.width + (end.size.width - start.size.width) * t,
-            height: start.size.height + (end.size.height - start.size.height) * t
-        )
-    }
-
-    private func easeInOutCubic(_ progress: CGFloat) -> CGFloat {
-        if progress < 0.5 {
-            return 4 * progress * progress * progress
-        }
-        let p = -2 * progress + 2
-        return 1 - (p * p * p) / 2
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.01, execute: work)
     }
 
     private func currentPopoverVisibleContentSize(_ popover: NSPopover) -> NSSize {
@@ -625,7 +474,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     
     func applicationWillTerminate(_ notification: Notification) {
         pendingPopoverResizeWorkItem?.cancel()
-        stopSynchronizedPopoverResize()
         refreshTimer?.invalidate()
         if let monitor = globalEventMonitor {
             NSEvent.removeMonitor(monitor)

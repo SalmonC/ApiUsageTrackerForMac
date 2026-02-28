@@ -1,15 +1,11 @@
 import SwiftUI
 
-private let popoverSynchronizedResizeDuration: TimeInterval = 0.24
-private let popoverSynchronizedResizeAnimation = Animation.easeInOut(duration: popoverSynchronizedResizeDuration)
-private let popoverSynchronizedResizeTrailingGrace: TimeInterval = 0.24
 private let usageListCoordinateSpaceName = "usageListCoordinateSpace"
 private let dragAutoScrollThrottle: TimeInterval = 0.12
 
 struct MainView: View {
     @ObservedObject var viewModel: AppViewModel
     var onPreferredHeightChange: ((CGFloat) -> Void)? = nil
-    var onExpansionAnimationPhaseChange: ((Bool) -> Void)? = nil
     
     @State private var measuredHeaderHeight: CGFloat = 0
     @State private var measuredSummaryHeight: CGFloat = 0
@@ -17,8 +13,6 @@ struct MainView: View {
     @State private var measuredListContentHeight: CGFloat = 0
     @State private var lastReportedPreferredHeight: CGFloat = 0
     @State private var pendingHeightReport: DispatchWorkItem?
-    @State private var pendingExpansionAnimationEnd: DispatchWorkItem?
-    @State private var isSynchronizingExpansionResize = false
     @State private var draggedAccountID: UUID?
     @State private var rowFrames: [UUID: CGRect] = [:]
     @State private var usageListViewportHeight: CGFloat = 0
@@ -75,12 +69,7 @@ struct MainView: View {
             measuredSummaryHeight = heights[MainViewMeasuredSection.summary] ?? measuredSummaryHeight
             measuredFooterHeight = heights[MainViewMeasuredSection.footer] ?? measuredFooterHeight
             measuredListContentHeight = heights[MainViewMeasuredSection.list] ?? measuredListContentHeight
-            if isSynchronizingExpansionResize {
-                refreshSynchronizedExpansionResizePhase()
-                schedulePreferredHeightReport(immediate: true)
-            } else {
-                schedulePreferredHeightReport(delay: 0.10)
-            }
+            schedulePreferredHeightReport(delay: 0.08)
         }
         .onPreferenceChange(UsageRowFramePreferenceKey.self) { frames in
             rowFrames.merge(frames, uniquingKeysWith: { _, new in new })
@@ -91,12 +80,6 @@ struct MainView: View {
         .onDisappear {
             pendingHeightReport?.cancel()
             pendingHeightReport = nil
-            pendingExpansionAnimationEnd?.cancel()
-            pendingExpansionAnimationEnd = nil
-            if isSynchronizingExpansionResize {
-                isSynchronizingExpansionResize = false
-                onExpansionAnimationPhaseChange?(false)
-            }
             endRowDrag()
             rowFrames = [:]
             usageListViewportHeight = 0
@@ -224,7 +207,7 @@ struct MainView: View {
     
     private var usageListView: some View {
         ScrollViewReader { scrollProxy in
-            ScrollView(.vertical, showsIndicators: !isSynchronizingExpansionResize) {
+            ScrollView(.vertical, showsIndicators: true) {
                 LazyVStack(spacing: 12) {
                     ForEach(viewModel.displayUsageData, id: \.accountId) { data in
                         UsageRowView(
@@ -236,9 +219,6 @@ struct MainView: View {
                                 Task {
                                     await viewModel.refreshAccount(data.accountId)
                                 }
-                            },
-                            onExpansionAnimationTriggered: {
-                                beginSynchronizedExpansionResize()
                             },
                             onDragChanged: { value in
                                 handleRowDragChanged(
@@ -439,7 +419,7 @@ struct MainView: View {
         }
         
         let preferredHeight = header + dividerHeights + summary + contentHeight + footer + safetyPadding
-        let reportThreshold: CGFloat = isSynchronizingExpansionResize ? 0.35 : 1.0
+        let reportThreshold: CGFloat = 1.0
         guard abs(preferredHeight - lastReportedPreferredHeight) > reportThreshold else { return }
         
         lastReportedPreferredHeight = preferredHeight
@@ -463,44 +443,6 @@ struct MainView: View {
         
         let actualDelay = immediate ? 0 : delay
         DispatchQueue.main.asyncAfter(deadline: .now() + actualDelay, execute: work)
-    }
-
-    private func beginSynchronizedExpansionResize() {
-        if !isSynchronizingExpansionResize {
-            isSynchronizingExpansionResize = true
-            onExpansionAnimationPhaseChange?(true)
-        }
-
-        schedulePreferredHeightReport(immediate: true)
-
-        pendingExpansionAnimationEnd?.cancel()
-        let endWork = DispatchWorkItem {
-            isSynchronizingExpansionResize = false
-            onExpansionAnimationPhaseChange?(false)
-            schedulePreferredHeightReport(delay: 0.02)
-        }
-        pendingExpansionAnimationEnd = endWork
-        DispatchQueue.main.asyncAfter(
-            deadline: .now() + popoverSynchronizedResizeDuration + 0.05,
-            execute: endWork
-        )
-    }
-
-    private func refreshSynchronizedExpansionResizePhase() {
-        guard isSynchronizingExpansionResize else { return }
-        onExpansionAnimationPhaseChange?(true)
-
-        pendingExpansionAnimationEnd?.cancel()
-        let endWork = DispatchWorkItem {
-            isSynchronizingExpansionResize = false
-            onExpansionAnimationPhaseChange?(false)
-            schedulePreferredHeightReport(delay: 0.02)
-        }
-        pendingExpansionAnimationEnd = endWork
-        DispatchQueue.main.asyncAfter(
-            deadline: .now() + popoverSynchronizedResizeTrailingGrace,
-            execute: endWork
-        )
     }
 }
 
@@ -555,79 +497,35 @@ private struct UsageRowView: View {
     var canManualReorder: Bool = false
     var isDragSource: Bool = false
     var onRetry: (() -> Void)?
-    var onExpansionAnimationTriggered: (() -> Void)?
     var onDragChanged: ((CGFloat) -> Void)?
     var onDragEnded: (() -> Void)?
-    @State private var isExpanded: Bool = false
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // Header row - always visible
-            HStack(spacing: 10) {
-                // Expand/collapse button
-                Button(action: {
-                    toggleExpanded()
-                }) {
-                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(.secondary)
-                        .frame(width: 20, height: 20)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                
-                if canManualReorder {
-                    dragHandle
-                }
-                
-                // Provider icon
-                ZStack {
-                    Circle()
-                        .fill(providerColor.opacity(0.15))
-                        .frame(width: 32, height: 32)
-                    Image(systemName: data.provider.icon)
-                        .font(.system(size: 14))
-                        .foregroundColor(providerColor)
-                }
-                
-                // Account name
-                Text(data.accountName)
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                    .lineLimit(1)
-                
-                Spacer(minLength: 8)
-                
-                // Status indicator (right side)
-                VStack(alignment: .trailing, spacing: 2) {
-                    statusIndicator
-                    statusLabel
+        VStack(alignment: .leading, spacing: 8) {
+            topRow
+
+            if let error = data.errorMessage {
+                errorRow(error)
+            } else {
+                usageSummaryRow
+                if let total = data.tokenTotal, total > 0 {
+                    progressBar
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(headerBackground)
-            .contentShape(Rectangle())
-            .onTapGesture {
-                toggleExpanded()
-            }
-            
-            // Expandable content
-            if isExpanded {
-                expandedContent
-                    .transition(.asymmetric(
-                        insertion: .opacity.combined(with: .move(edge: .top)),
-                        removal: .opacity
-                    ))
+
+            if let resetTime = data.monthlyRefreshTime ?? data.nextRefreshTime ?? data.refreshTime {
+                resetRow(resetTime)
             }
         }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 10)
         .background(Color(NSColor.controlBackgroundColor))
         .opacity(isDragSource ? 0.78 : 1.0)
         .scaleEffect(isDragSource ? 0.992 : 1.0)
         .cornerRadius(10)
         .overlay(
             RoundedRectangle(cornerRadius: 10)
-                .stroke(borderColor, lineWidth: 1)
+                .stroke(Color.gray.opacity(0.18), lineWidth: 1)
         )
         .shadow(
             color: (isDragSource ? Color.accentColor : .black).opacity(isDragSource ? 0.16 : 0.03),
@@ -639,15 +537,163 @@ private struct UsageRowView: View {
         .animation(.easeOut(duration: 0.12), value: isDragSource)
     }
 
-    private func toggleExpanded() {
-        onExpansionAnimationTriggered?()
-        withAnimation(popoverSynchronizedResizeAnimation) {
-            isExpanded.toggle()
+    private var topRow: some View {
+        HStack(spacing: 8) {
+            if canManualReorder {
+                dragHandle
+            }
+
+            ZStack {
+                Circle()
+                    .fill(providerColor.opacity(0.15))
+                    .frame(width: 28, height: 28)
+                Image(systemName: data.provider.icon)
+                    .font(.system(size: 12))
+                    .foregroundColor(providerColor)
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(data.accountName)
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .lineLimit(1)
+
+                HStack(spacing: 6) {
+                    Text(data.provider.displayName)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                    if let plan = data.displaySubscriptionPlan, data.provider == .chatGPT {
+                        Text(plan)
+                            .font(.caption2)
+                            .fontWeight(.semibold)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.green.opacity(0.14))
+                            .foregroundColor(.green)
+                            .cornerRadius(5)
+                    }
+                }
+            }
+
+            Spacer(minLength: 6)
+            trailingStatus
         }
     }
-    
-    // MARK: - Header Components
-    
+
+    @ViewBuilder
+    private var trailingStatus: some View {
+        if isRefreshing {
+            ProgressView().scaleEffect(0.75)
+        } else if data.errorMessage != nil {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundColor(.orange)
+                .font(.system(size: 14))
+        } else if data.tokenRemaining != nil {
+            Text(data.displayRemaining)
+                .font(.system(.headline, design: .rounded))
+                .fontWeight(.semibold)
+                .foregroundColor(remainingColor)
+        } else if let plan = data.displaySubscriptionPlan, data.provider == .chatGPT {
+            Text(plan)
+                .font(.caption)
+                .fontWeight(.semibold)
+                .foregroundColor(.green)
+        } else {
+            Text("--")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private func errorRow(_ error: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.caption)
+                .foregroundColor(.orange)
+            Text(error)
+                .font(.caption)
+                .lineLimit(1)
+                .foregroundColor(.primary)
+            Spacer(minLength: 6)
+            if let onRetry {
+                Button(action: onRetry) {
+                    Image(systemName: isRefreshing ? "hourglass" : "arrow.clockwise")
+                        .font(.caption)
+                }
+                .buttonStyle(.borderless)
+                .disabled(isRefreshing)
+                .help("重试")
+            }
+        }
+    }
+
+    private var usageSummaryRow: some View {
+        HStack(spacing: 8) {
+            if let summary = usageSummaryText {
+                Text(summary)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+            } else {
+                Text("暂无用量统计")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            if let monthlyRemaining = data.monthlyRemaining {
+                Text("· 月余 \(formatValue(monthlyRemaining))")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 6)
+
+            if data.tokenTotal != nil {
+                Text("\(Int(data.usagePercentage))%")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundColor(usageColor)
+            }
+        }
+    }
+
+    private var progressBar: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(Color.gray.opacity(0.18))
+                    .frame(height: 5)
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(usageGradient)
+                    .frame(width: geo.size.width * CGFloat(min(data.usagePercentage / 100, 1.0)), height: 5)
+            }
+        }
+        .frame(height: 5)
+    }
+
+    @ViewBuilder
+    private func resetRow(_ resetTime: Date) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: "clock.arrow.circlepath")
+                .font(.caption2)
+                .foregroundColor(.secondary)
+            Text("重置: \(formattedDate(resetTime))")
+                .font(.caption2)
+                .foregroundColor(.secondary)
+                .lineLimit(1)
+            if let countdown = countdownString(for: resetTime) {
+                Text("(\(countdown))")
+                    .font(.caption2)
+                    .foregroundColor(.blue)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
     @ViewBuilder
     private var dragHandle: some View {
         if let onDragChanged, let onDragEnded {
@@ -666,352 +712,7 @@ private struct UsageRowView: View {
                 )
         }
     }
-    
-    @ViewBuilder
-    private var statusIndicator: some View {
-        if isRefreshing {
-            ProgressView()
-                .scaleEffect(0.7)
-        } else if let error = data.errorMessage {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundColor(.orange)
-                .font(.system(size: 14))
-                .help(error)
-        } else if let plan = data.displaySubscriptionPlan, data.provider == .chatGPT, data.tokenRemaining == nil {
-            Text(plan)
-                .font(.caption)
-                .fontWeight(.semibold)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Color.green.opacity(0.12))
-                .foregroundColor(.green)
-                .cornerRadius(8)
-        } else if data.tokenRemaining != nil {
-            HStack(spacing: 6) {
-                // Mini progress ring
-                if data.tokenTotal != nil && data.tokenTotal! > 0 {
-                    ZStack {
-                        Circle()
-                            .stroke(Color.gray.opacity(0.2), lineWidth: 3)
-                            .frame(width: 20, height: 20)
-                        Circle()
-                            .trim(from: 0, to: CGFloat(min(data.usagePercentage / 100, 1.0)))
-                            .stroke(usageColor, style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                            .frame(width: 20, height: 20)
-                            .rotationEffect(.degrees(-90))
-                    }
-                }
-                
-                VStack(alignment: .trailing, spacing: 0) {
-                    Text(data.displayRemaining)
-                        .font(.system(.subheadline, design: .rounded))
-                        .fontWeight(.semibold)
-                        .foregroundColor(remainingColor)
-                    
-                    if data.tokenTotal != nil {
-                        Text("\(Int(data.usagePercentage))% used")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                    }
-                }
-            }
-        } else {
-            Text("--")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-        }
-    }
 
-    @ViewBuilder
-    private var statusLabel: some View {
-        if isRefreshing {
-            Text("Refreshing")
-                .font(.caption2)
-                .foregroundColor(.secondary)
-        } else if data.errorMessage != nil {
-            Text("Failed")
-                .font(.caption2)
-                .foregroundColor(.orange)
-        } else if data.tokenTotal != nil {
-            Text(riskLabel)
-                .font(.caption2)
-                .foregroundColor(usageColor)
-        }
-    }
-    
-    private var headerBackground: some View {
-        Group {
-            if isExpanded {
-                Color.blue.opacity(0.05)
-            } else {
-                Color.clear
-            }
-        }
-    }
-    
-    private var borderColor: Color {
-        if isExpanded {
-            return Color.blue.opacity(0.3)
-        }
-        return Color.gray.opacity(0.15)
-    }
-    
-    // MARK: - Expanded Content
-    
-    @ViewBuilder
-    private var expandedContent: some View {
-        VStack(spacing: 0) {
-            Divider()
-                .padding(.horizontal, 12)
-            
-            if let error = data.errorMessage {
-                errorSection(error)
-            } else {
-                detailsSection
-            }
-        }
-        .padding(.bottom, 12)
-    }
-    
-    @ViewBuilder
-    private func errorSection(_ error: String) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundColor(.orange)
-                    .font(.system(size: 16))
-                
-                Text(error)
-                    .font(.caption)
-                    .foregroundColor(.primary)
-                    .lineLimit(2)
-                
-                Spacer()
-            }
-            
-            if let onRetry = onRetry {
-                Button(action: onRetry) {
-                    HStack(spacing: 4) {
-                        if isRefreshing {
-                            ProgressView()
-                                .scaleEffect(0.6)
-                        } else {
-                            Image(systemName: "arrow.clockwise")
-                                .font(.caption)
-                        }
-                        Text(isRefreshing ? "Retrying..." : "Retry This Account")
-                            .font(.caption)
-                    }
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(isRefreshing)
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.top, 12)
-    }
-    
-    @ViewBuilder
-    private var detailsSection: some View {
-        VStack(spacing: 12) {
-            if let plan = data.displaySubscriptionPlan, data.provider == .chatGPT {
-                HStack(spacing: 6) {
-                    Image(systemName: "checkmark.seal")
-                        .font(.caption2)
-                        .foregroundColor(.green)
-                    Text("Subscription: \(plan)")
-                        .font(.caption)
-                        .foregroundColor(.primary)
-                    Spacer()
-                }
-            }
-            
-            // Stats grid
-            HStack(spacing: 0) {
-                if data.tokenUsed != nil {
-                    StatBox(
-                        title: "Used",
-                        value: data.displayUsed,
-                        icon: "arrow.down.circle",
-                        color: .orange
-                    )
-                    .frame(maxWidth: .infinity)
-                }
-                
-                if data.tokenTotal != nil {
-                    StatBox(
-                        title: "Total",
-                        value: data.displayTotal,
-                        icon: "circle.grid.2x2",
-                        color: .blue
-                    )
-                    .frame(maxWidth: .infinity)
-                }
-                
-                if data.tokenRemaining != nil {
-                    StatBox(
-                        title: "Remaining",
-                        value: data.displayRemaining,
-                        icon: "checkmark.circle",
-                        color: remainingColor
-                    )
-                    .frame(maxWidth: .infinity)
-                }
-            }
-            
-            // Progress bar
-            if data.tokenTotal != nil && data.tokenTotal! > 0 {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text("Usage Progress")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        Text("\(Int(data.usagePercentage))%")
-                            .font(.caption2)
-                            .fontWeight(.medium)
-                            .foregroundColor(usageColor)
-                    }
-                    
-                    GeometryReader { geo in
-                        ZStack(alignment: .leading) {
-                            RoundedRectangle(cornerRadius: 3)
-                                .fill(Color.gray.opacity(0.15))
-                                .frame(height: 6)
-                            
-                            RoundedRectangle(cornerRadius: 3)
-                                .fill(usageGradient)
-                                .frame(width: geo.size.width * CGFloat(min(data.usagePercentage / 100, 1.0)), height: 6)
-                        }
-                    }
-                    .frame(height: 6)
-                }
-            }
-            
-            // Monthly quota section (if available)
-            if data.monthlyTotal != nil || data.monthlyRemaining != nil {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Text("Monthly Quota")
-                            .font(.caption)
-                            .fontWeight(.medium)
-                            .foregroundColor(.primary)
-                        Spacer()
-                    }
-                    
-                    HStack(spacing: 0) {
-                        if data.monthlyUsed != nil {
-                            StatBox(
-                                title: "Used",
-                                value: data.displayMonthlyUsed,
-                                icon: "arrow.down.circle.fill",
-                                color: .orange
-                            )
-                            .frame(maxWidth: .infinity)
-                        }
-                        
-                        if data.monthlyTotal != nil {
-                            StatBox(
-                                title: "Total",
-                                value: data.displayMonthlyTotal,
-                                icon: "calendar.circle.fill",
-                                color: .blue
-                            )
-                            .frame(maxWidth: .infinity)
-                        }
-                        
-                        if data.monthlyRemaining != nil {
-                            StatBox(
-                                title: "Remaining",
-                                value: data.displayMonthlyRemaining,
-                                icon: "checkmark.circle.fill",
-                                color: .green
-                            )
-                            .frame(maxWidth: .infinity)
-                        }
-                    }
-                    
-                    // Monthly progress bar
-                    if data.monthlyTotal != nil && data.monthlyTotal! > 0 {
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack {
-                                Text("Monthly Usage")
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
-                                Spacer()
-                                Text("\(Int(data.monthlyUsagePercentage))%")
-                                    .font(.caption2)
-                                    .fontWeight(.medium)
-                                    .foregroundColor(monthlyUsageColor)
-                            }
-                            
-                            GeometryReader { geo in
-                                ZStack(alignment: .leading) {
-                                    RoundedRectangle(cornerRadius: 2)
-                                        .fill(Color.gray.opacity(0.15))
-                                        .frame(height: 4)
-                                    
-                                    RoundedRectangle(cornerRadius: 2)
-                                        .fill(monthlyUsageGradient)
-                                        .frame(width: geo.size.width * CGFloat(min(data.monthlyUsagePercentage / 100, 1.0)), height: 4)
-                                }
-                            }
-                            .frame(height: 4)
-                        }
-                    }
-                    
-                    // Monthly refresh time
-                    if let monthlyRefresh = data.monthlyRefreshTime ?? data.nextRefreshTime {
-                        HStack(spacing: 4) {
-                            Image(systemName: "calendar.badge.clock")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                            
-                            Text("Resets: \(formattedDate(monthlyRefresh))")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                            
-                            if let countdown = countdownString(for: monthlyRefresh) {
-                                Text("(\(countdown))")
-                                    .font(.caption2)
-                                    .fontWeight(.medium)
-                                    .foregroundColor(.blue)
-                            }
-                        }
-                    }
-                }
-                .padding(.top, 8)
-                .padding(.horizontal, 4)
-            }
-            
-            // Refresh time
-            if let refreshTime = data.refreshTime {
-                HStack(spacing: 6) {
-                    Image(systemName: "clock.arrow.circlepath")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                    
-                    Text("Resets: \(formattedDate(refreshTime))")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                    
-                    if let countdown = countdownString(for: refreshTime) {
-                        Text("(\(countdown) left)")
-                            .font(.caption2)
-                            .fontWeight(.medium)
-                            .foregroundColor(.blue)
-                    }
-                }
-                .padding(.top, 4)
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.top, 12)
-    }
-    
-    // MARK: - Helpers
-    
     private var providerColor: Color {
         switch data.provider {
         case .miniMax:
@@ -1028,26 +729,7 @@ private struct UsageRowView: View {
             return .indigo
         }
     }
-    
-    private var monthlyUsageColor: Color {
-        if data.monthlyUsagePercentage > 90 {
-            return .red
-        } else if data.monthlyUsagePercentage > 70 {
-            return .orange
-        } else if data.monthlyUsagePercentage > 50 {
-            return .yellow
-        }
-        return .blue
-    }
-    
-    private var monthlyUsageGradient: LinearGradient {
-        LinearGradient(
-            colors: [monthlyUsageColor.opacity(0.8), monthlyUsageColor],
-            startPoint: .leading,
-            endPoint: .trailing
-        )
-    }
-    
+
     private var remainingColor: Color {
         if data.tokenTotal != nil && data.tokenTotal! > 0 {
             let pct = data.usagePercentage
@@ -1080,17 +762,6 @@ private struct UsageRowView: View {
             endPoint: .trailing
         )
     }
-
-    private var riskLabel: String {
-        if data.usagePercentage > 90 {
-            return "High Risk"
-        } else if data.usagePercentage > 70 {
-            return "Warning"
-        } else if data.tokenTotal != nil {
-            return "Normal"
-        }
-        return ""
-    }
     
     private func countdownString(for refreshTime: Date) -> String? {
         let now = Date()
@@ -1116,35 +787,24 @@ private struct UsageRowView: View {
         formatter.timeStyle = .short
         return formatter.string(from: date)
     }
-}
 
-// MARK: - StatBox Component
-
-struct StatBox: View {
-    let title: String
-    let value: String
-    let icon: String
-    let color: Color
-    
-    var body: some View {
-        VStack(spacing: 6) {
-            HStack(spacing: 4) {
-                Image(systemName: icon)
-                    .font(.caption2)
-                    .foregroundColor(color)
-                Text(title)
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-            }
-            
-            Text(value)
-                .font(.system(.callout, design: .rounded))
-                .fontWeight(.semibold)
-                .foregroundColor(.primary)
+    private var usageSummaryText: String? {
+        if data.tokenUsed != nil && data.tokenTotal != nil {
+            return "已用 \(data.displayUsed) / \(data.displayTotal)"
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 8)
-        .background(color.opacity(0.08))
-        .cornerRadius(8)
+        if data.tokenUsed != nil {
+            return "已用 \(data.displayUsed)"
+        }
+        if data.tokenTotal != nil {
+            return "总额 \(data.displayTotal)"
+        }
+        return nil
+    }
+
+    private func formatValue(_ value: Double) -> String {
+        if value >= 1000 {
+            return String(format: "%.1fK", value / 1000)
+        }
+        return String(format: "%.0f", value)
     }
 }
