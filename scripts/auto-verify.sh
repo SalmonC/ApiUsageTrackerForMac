@@ -132,9 +132,8 @@ if [[ -n "$latest_crash" ]] && (( latest_crash_ts >= START_TS )); then
   fail "Crash report detected during verification: $latest_crash"
 fi
 
-if [[ "$PRINT_APP_LOG_TAIL" == "1" ]] && [[ -f "$HOME/Documents/api_tracker.log" ]]; then
-  log "Recent app log tail:"
-  tail -n 12 "$HOME/Documents/api_tracker.log" || true
+if [[ "$PRINT_APP_LOG_TAIL" == "1" ]]; then
+  log "Tip: runtime logs are now in macOS Unified Logging (Console.app), not ~/Documents/api_tracker.log"
 fi
 
 log "Verification passed."

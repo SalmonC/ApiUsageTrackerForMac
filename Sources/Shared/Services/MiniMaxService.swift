@@ -1,4 +1,5 @@
 import Foundation
+import os.log
 
 // Helper function to parse numbers from various formats
 func parseNumber(_ value: Any?) -> Double? {
@@ -16,77 +17,16 @@ func parseNumber(_ value: Any?) -> Double? {
 }
 
 final class Logger {
-    static let shared = Logger()
-    
-    private var logBuffer: [String] = []
-    private let bufferSize = 10
-    private let flushInterval: TimeInterval = 30
-    private var flushTimer: Timer?
-    private let logQueue = DispatchQueue(label: "com.mactools.apiusagetracker.logger", qos: .utility)
-    private let logFile: URL?
-    
-    private init() {
-        logFile = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?.appendingPathComponent("api_tracker.log")
-        startFlushTimer()
-    }
-    
-    deinit {
-        flushTimer?.invalidate()
-        flushBuffer()
-    }
+    private static let logger = OSLog(
+        subsystem: Bundle.main.bundleIdentifier ?? "com.mactools.apiusagetracker",
+        category: "app"
+    )
     
     static func log(_ message: String) {
         #if DEBUG
-        print("[API Tracker] \(message)")
+        print("[QuotaPulse] \(message)")
         #endif
-        
-        let timestamp = ISO8601DateFormatter().string(from: Date())
-        let logMessage = "[\(timestamp)] \(message)"
-        
-        shared.logQueue.async {
-            shared.logBuffer.append(logMessage)
-            if shared.logBuffer.count >= shared.bufferSize {
-                shared.flushBuffer()
-            }
-        }
-    }
-    
-    private func log(_ message: String) {
-        logBuffer.append(message)
-        if logBuffer.count >= bufferSize {
-            flushBuffer()
-        }
-    }
-    
-    private func startFlushTimer() {
-        flushTimer = Timer.scheduledTimer(withTimeInterval: flushInterval, repeats: true) { [weak self] _ in
-            self?.logQueue.async {
-                self?.flushBuffer()
-            }
-        }
-    }
-    
-    private func flushBuffer() {
-        guard !logBuffer.isEmpty, let logFile = logFile else { return }
-        
-        let messages = logBuffer.joined(separator: "\n") + "\n"
-        logBuffer.removeAll()
-        
-        guard let data = messages.data(using: .utf8) else { return }
-        
-        do {
-            if FileManager.default.fileExists(atPath: logFile.path) {
-                if let handle = try? FileHandle(forWritingTo: logFile) {
-                    handle.seekToEndOfFile()
-                    handle.write(data)
-                    handle.closeFile()
-                }
-            } else {
-                try data.write(to: logFile)
-            }
-        } catch {
-            print("[Logger] Failed to write to log file: \(error)")
-        }
+        os_log("%{public}@", log: logger, type: .default, message)
     }
 }
 
