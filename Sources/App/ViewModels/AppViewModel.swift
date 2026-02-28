@@ -57,7 +57,8 @@ final class AppViewModel: ObservableObject {
         var earliestRefresh: Date?
         
         for data in usageData {
-            if let refreshTime = data.refreshTime, refreshTime > now {
+            let candidates = [data.nextRefreshTime, data.refreshTime, data.monthlyRefreshTime]
+            for refreshTime in candidates.compactMap({ $0 }) where refreshTime > now {
                 if earliestRefresh == nil || refreshTime < earliestRefresh! {
                     earliestRefresh = refreshTime
                 }

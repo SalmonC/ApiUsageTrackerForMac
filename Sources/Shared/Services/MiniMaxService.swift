@@ -765,32 +765,49 @@ final class ChatGPTService: UsageService {
         
         if let limitsJSON {
             Logger.log("ChatGPT limits response: \(limitsJSON)")
-            
+
+            var quotaCandidates: [(source: String, parsed: (remaining: Double?, used: Double?, total: Double?, resetAt: Date?, hasData: Bool))] = []
+
             if let messageScope = findBestQuotaContainer(in: limitsJSON, preferredKeywords: ["message", "cap"]) {
                 let parsed = parseQuota(from: messageScope)
-                monthlyRemaining = parsed.remaining
-                monthlyUsed = parsed.used
-                monthlyTotal = parsed.total
-                monthlyRefreshTime = parsed.resetAt
-                hasAnyData = hasAnyData || parsed.hasData
+                if parsed.hasData {
+                    quotaCandidates.append((source: "message", parsed: parsed))
+                }
             }
-            
+
             if let tokenScope = findBestQuotaContainer(in: limitsJSON, preferredKeywords: ["token"]) {
                 let parsed = parseQuota(from: tokenScope)
-                tokenRemaining = parsed.remaining
-                tokenUsed = parsed.used
-                tokenTotal = parsed.total
-                refreshTime = parsed.resetAt
-                hasAnyData = hasAnyData || parsed.hasData
+                if parsed.hasData {
+                    quotaCandidates.append((source: "token", parsed: parsed))
+                }
             }
-            
-            if !hasAnyData {
+
+            if quotaCandidates.isEmpty {
                 let parsed = parseQuota(from: limitsJSON)
-                tokenRemaining = parsed.remaining
-                tokenUsed = parsed.used
-                tokenTotal = parsed.total
-                refreshTime = parsed.resetAt
-                hasAnyData = parsed.hasData
+                if parsed.hasData {
+                    quotaCandidates.append((source: "root", parsed: parsed))
+                }
+            }
+
+            let sortedCandidates = quotaCandidates.sorted { lhs, rhs in
+                quotaResetPriority(lhs.parsed.resetAt) < quotaResetPriority(rhs.parsed.resetAt)
+            }
+
+            if let primary = sortedCandidates.first {
+                tokenRemaining = primary.parsed.remaining
+                tokenUsed = primary.parsed.used
+                tokenTotal = primary.parsed.total
+                refreshTime = primary.parsed.resetAt
+                hasAnyData = true
+            }
+
+            if sortedCandidates.count > 1 {
+                let secondary = sortedCandidates[1]
+                monthlyRemaining = secondary.parsed.remaining
+                monthlyUsed = secondary.parsed.used
+                monthlyTotal = secondary.parsed.total
+                monthlyRefreshTime = secondary.parsed.resetAt
+                hasAnyData = true
             }
         }
         
@@ -814,8 +831,9 @@ final class ChatGPTService: UsageService {
                 subscriptionPlan = planType
                 monthlyRefreshTime = plan.renewalDate
                 hasAnyData = true
-            } else if monthlyRefreshTime == nil {
-                monthlyRefreshTime = plan.renewalDate
+            } else if monthlyRefreshTime == nil ||
+                        (refreshTime != nil && datesClose(monthlyRefreshTime, refreshTime)) {
+                monthlyRefreshTime = plan.renewalDate ?? monthlyRefreshTime
             }
         }
         
@@ -848,7 +866,7 @@ final class ChatGPTService: UsageService {
             monthlyTotal: monthlyTotal,
             monthlyUsed: monthlyUsed,
             monthlyRefreshTime: monthlyRefreshTime,
-            nextRefreshTime: monthlyRefreshTime ?? refreshTime,
+            nextRefreshTime: refreshTime ?? monthlyRefreshTime,
             subscriptionPlan: subscriptionPlan
         )
     }
@@ -1149,6 +1167,21 @@ final class ChatGPTService: UsageService {
         }
         return result
     }
+
+    private func quotaResetPriority(_ date: Date?) -> TimeInterval {
+        guard let date else { return .greatestFiniteMagnitude }
+        let now = Date()
+        let delta = date.timeIntervalSince(now)
+        if delta >= 0 {
+            return delta
+        }
+        return abs(delta) + 86_400
+    }
+
+    private func datesClose(_ lhs: Date?, _ rhs: Date?) -> Bool {
+        guard let lhs, let rhs else { return false }
+        return abs(lhs.timeIntervalSince(rhs)) < 60
+    }
     
     private func decodeJWTPayload(_ token: String) -> [String: Any]? {
         let parts = token.split(separator: ".")
@@ -1400,29 +1433,28 @@ final class KIMIService: UsageService {
 
         let refreshTime = parseKIMIDate(usage?["resetTime"] ?? usage?["reset_time"])
 
-        var nextRefreshTime: Date?
-        if let limits = json["limits"] as? [[String: Any]] {
-            for limit in limits {
-                let detail = (limit["detail"] as? [String: Any]) ?? limit
-                let candidate = parseKIMIDate(detail["resetTime"] ?? detail["reset_time"])
-                if let candidate {
-                    if nextRefreshTime == nil || candidate < nextRefreshTime! {
-                        nextRefreshTime = candidate
-                    }
-                }
-            }
-        }
+        let limitSnapshots = parseKimiLimitSnapshots(from: json["limits"])
+        let selectedLimitSnapshot = pickNearestUpcomingLimitSnapshot(limitSnapshots)
+
+        let limitResetCandidates: [Date] = limitSnapshots.compactMap(\.resetAt)
+        let now = Date()
+        let futureCandidates = limitResetCandidates.filter { $0.timeIntervalSince(now) > -60 }
+        let sortedCandidates = (futureCandidates.isEmpty ? limitResetCandidates : futureCandidates).sorted()
+        let nextRefreshTime = sortedCandidates.first(where: { candidate in
+            guard let refreshTime else { return true }
+            return abs(candidate.timeIntervalSince(refreshTime)) > 60
+        }) ?? sortedCandidates.first
 
         return UsageResult(
             remaining: remaining,
             used: used,
             total: total,
             refreshTime: refreshTime,
-            monthlyRemaining: nil,
-            monthlyTotal: nil,
-            monthlyUsed: nil,
-            monthlyRefreshTime: nil,
-            nextRefreshTime: nextRefreshTime,
+            monthlyRemaining: selectedLimitSnapshot?.remaining,
+            monthlyTotal: selectedLimitSnapshot?.total,
+            monthlyUsed: selectedLimitSnapshot?.used,
+            monthlyRefreshTime: selectedLimitSnapshot?.resetAt,
+            nextRefreshTime: selectedLimitSnapshot?.resetAt ?? nextRefreshTime,
             subscriptionPlan: membershipLevel
         )
     }
@@ -1548,6 +1580,94 @@ final class KIMIService: UsageService {
 
         let basic = ISO8601DateFormatter()
         return basic.date(from: value)
+    }
+
+    private struct KimiLimitSnapshot {
+        var remaining: Double?
+        var used: Double?
+        var total: Double?
+        var resetAt: Date?
+
+        var hasAnyData: Bool {
+            remaining != nil || used != nil || total != nil || resetAt != nil
+        }
+    }
+
+    private func parseKimiLimitSnapshots(from raw: Any?) -> [KimiLimitSnapshot] {
+        guard let limits = raw as? [[String: Any]] else {
+            return []
+        }
+
+        var snapshots: [KimiLimitSnapshot] = []
+        for limit in limits {
+            let detail = (limit["detail"] as? [String: Any]) ?? limit
+
+            let total = parseNumber(detail["limit"]) ??
+                parseNumber(detail["total"]) ??
+                parseNumber(detail["max"]) ??
+                parseNumber(detail["quota"])
+            var remaining = parseNumber(detail["remaining"]) ??
+                parseNumber(detail["remain"]) ??
+                parseNumber(detail["available"])
+            var used = parseNumber(detail["used"]) ??
+                parseNumber(detail["consumed"])
+
+            if used == nil, let total, let remaining {
+                used = max(0, total - remaining)
+            }
+            if remaining == nil, let total, let used {
+                remaining = max(0, total - used)
+            }
+
+            let resetAt =
+                parseKIMIDate(detail["resetTime"] ?? detail["reset_time"] ?? detail["nextResetTime"] ?? detail["next_reset_time"]) ??
+                parseKIMIDate(limit["resetTime"] ?? limit["reset_time"] ?? limit["nextResetTime"] ?? limit["next_reset_time"])
+
+            let snapshot = KimiLimitSnapshot(
+                remaining: remaining,
+                used: used,
+                total: total,
+                resetAt: resetAt
+            )
+
+            if snapshot.hasAnyData {
+                snapshots.append(snapshot)
+            }
+        }
+
+        return snapshots
+    }
+
+    private func pickNearestUpcomingLimitSnapshot(_ snapshots: [KimiLimitSnapshot]) -> KimiLimitSnapshot? {
+        let now = Date()
+        let withReset = snapshots.filter { $0.resetAt != nil }
+        let source = withReset.isEmpty ? snapshots : withReset
+
+        return source.min { lhs, rhs in
+            let lhsPriority = quotaResetPriority(lhs.resetAt, now: now)
+            let rhsPriority = quotaResetPriority(rhs.resetAt, now: now)
+            if lhsPriority != rhsPriority {
+                return lhsPriority < rhsPriority
+            }
+            return quotaCoverageScore(lhs) > quotaCoverageScore(rhs)
+        }
+    }
+
+    private func quotaCoverageScore(_ snapshot: KimiLimitSnapshot) -> Int {
+        var score = 0
+        if snapshot.total != nil { score += 2 }
+        if snapshot.used != nil { score += 2 }
+        if snapshot.remaining != nil { score += 1 }
+        return score
+    }
+
+    private func quotaResetPriority(_ date: Date?, now: Date) -> TimeInterval {
+        guard let date else { return .greatestFiniteMagnitude }
+        let delta = date.timeIntervalSince(now)
+        if delta >= 0 {
+            return delta
+        }
+        return abs(delta) + 86_400
     }
 
     private func normalizedMembershipLevel(_ raw: String) -> String {

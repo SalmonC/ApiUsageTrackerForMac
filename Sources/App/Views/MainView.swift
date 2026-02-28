@@ -507,14 +507,7 @@ private struct UsageRowView: View {
             if let error = data.errorMessage {
                 errorRow(error)
             } else {
-                usageSummaryRow
-                if let total = data.tokenTotal, total > 0 {
-                    progressBar
-                }
-            }
-
-            if let resetTime = data.monthlyRefreshTime ?? data.nextRefreshTime ?? data.refreshTime {
-                resetRow(resetTime)
+                quotaCycleRows
             }
         }
         .padding(.horizontal, 10)
@@ -629,68 +622,57 @@ private struct UsageRowView: View {
         }
     }
 
-    private var usageSummaryRow: some View {
-        HStack(spacing: 8) {
-            if let summary = usageSummaryText {
-                Text(summary)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .lineLimit(1)
-            } else {
-                Text("暂无用量统计")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-
-            if let monthlyRemaining = data.monthlyRemaining {
-                Text("· 月余 \(formatValue(monthlyRemaining))")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .lineLimit(1)
-            }
-
-            Spacer(minLength: 6)
-
-            if data.tokenTotal != nil {
-                Text("\(Int(data.usagePercentage))%")
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .foregroundColor(usageColor)
-            }
-        }
-    }
-
-    private var progressBar: some View {
-        GeometryReader { geo in
-            ZStack(alignment: .leading) {
-                RoundedRectangle(cornerRadius: 3)
-                    .fill(Color.gray.opacity(0.18))
-                    .frame(height: 5)
-                RoundedRectangle(cornerRadius: 3)
-                    .fill(usageGradient)
-                    .frame(width: geo.size.width * CGFloat(min(data.usagePercentage / 100, 1.0)), height: 5)
-            }
-        }
-        .frame(height: 5)
-    }
-
     @ViewBuilder
-    private func resetRow(_ resetTime: Date) -> some View {
-        HStack(spacing: 4) {
-            Image(systemName: "clock.arrow.circlepath")
-                .font(.caption2)
+    private var quotaCycleRows: some View {
+        if quotaCycles.isEmpty {
+            Text("暂无用量统计")
+                .font(.caption)
                 .foregroundColor(.secondary)
-            Text("重置: \(formattedDate(resetTime))")
-                .font(.caption2)
-                .foregroundColor(.secondary)
-                .lineLimit(1)
-            if let countdown = countdownString(for: resetTime) {
-                Text("(\(countdown))")
-                    .font(.caption2)
-                    .foregroundColor(.blue)
-                    .lineLimit(1)
+        } else {
+            VStack(alignment: .leading, spacing: 5) {
+                ForEach(quotaCycles) { cycle in
+                    quotaCycleRow(cycle)
+                }
             }
-            Spacer(minLength: 0)
+        }
+    }
+
+    private func quotaCycleRow(_ cycle: QuotaCycle) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 6) {
+                Text("\(cycleLabel(for: cycle)): \(cycleUsageText(cycle))")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+
+                Spacer(minLength: 6)
+
+                if let percentage = cycle.percentage {
+                    Text("\(Int(percentage))%")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundColor(percentageColor(percentage))
+                }
+            }
+
+            if let reset = cycle.reset {
+                HStack(spacing: 4) {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    Text("重置: \(formattedDate(reset))")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                    if let countdown = countdownString(for: reset) {
+                        Text("(\(countdown))")
+                            .font(.caption2)
+                            .foregroundColor(.blue)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
         }
     }
 
@@ -744,25 +726,6 @@ private struct UsageRowView: View {
         return .green
     }
     
-    private var usageColor: Color {
-        if data.usagePercentage > 90 {
-            return .red
-        } else if data.usagePercentage > 70 {
-            return .orange
-        } else if data.usagePercentage > 50 {
-            return .yellow
-        }
-        return .blue
-    }
-    
-    private var usageGradient: LinearGradient {
-        LinearGradient(
-            colors: [usageColor.opacity(0.8), usageColor],
-            startPoint: .leading,
-            endPoint: .trailing
-        )
-    }
-    
     private func countdownString(for refreshTime: Date) -> String? {
         let now = Date()
         guard refreshTime > now else { return nil }
@@ -788,23 +751,147 @@ private struct UsageRowView: View {
         return formatter.string(from: date)
     }
 
-    private var usageSummaryText: String? {
-        if data.tokenUsed != nil && data.tokenTotal != nil {
-            return "已用 \(data.displayUsed) / \(data.displayTotal)"
-        }
-        if data.tokenUsed != nil {
-            return "已用 \(data.displayUsed)"
-        }
-        if data.tokenTotal != nil {
-            return "总额 \(data.displayTotal)"
-        }
-        return nil
-    }
-
     private func formatValue(_ value: Double) -> String {
         if value >= 1000 {
             return String(format: "%.1fK", value / 1000)
         }
         return String(format: "%.0f", value)
+    }
+
+    private var quotaCycles: [QuotaCycle] {
+        var cycles: [QuotaCycle] = []
+        let primary = QuotaCycle(
+            source: .primary,
+            used: data.tokenUsed,
+            total: data.tokenTotal,
+            remaining: data.tokenRemaining,
+            reset: data.refreshTime ?? data.nextRefreshTime
+        )
+        let secondary = QuotaCycle(
+            source: .secondary,
+            used: data.monthlyUsed,
+            total: data.monthlyTotal,
+            remaining: data.monthlyRemaining,
+            reset: data.monthlyRefreshTime
+        )
+
+        if primary.hasData {
+            cycles.append(primary)
+        }
+        if secondary.hasData && !isSameCycle(primary, secondary) {
+            cycles.append(secondary)
+        }
+        return cycles
+    }
+
+    private func isSameCycle(_ lhs: QuotaCycle, _ rhs: QuotaCycle) -> Bool {
+        valuesClose(lhs.used, rhs.used) &&
+        valuesClose(lhs.total, rhs.total) &&
+        valuesClose(lhs.remaining, rhs.remaining) &&
+        datesClose(lhs.reset, rhs.reset)
+    }
+
+    private func valuesClose(_ lhs: Double?, _ rhs: Double?) -> Bool {
+        switch (lhs, rhs) {
+        case (nil, nil):
+            return true
+        case let (l?, r?):
+            return abs(l - r) < 0.0001
+        default:
+            return false
+        }
+    }
+
+    private func datesClose(_ lhs: Date?, _ rhs: Date?) -> Bool {
+        switch (lhs, rhs) {
+        case (nil, nil):
+            return true
+        case let (l?, r?):
+            return abs(l.timeIntervalSince(r)) < 60
+        default:
+            return false
+        }
+    }
+
+    private func cycleLabel(for cycle: QuotaCycle) -> String {
+        guard quotaCycles.count > 1 else { return "周期" }
+        if let shortSource = shortCycleSource {
+            return cycle.source == shortSource ? "短周期" : "长周期"
+        }
+        return cycle.source == .primary ? "周期A" : "周期B"
+    }
+
+    private var shortCycleSource: QuotaCycle.Source? {
+        let candidates = quotaCycles.compactMap { cycle -> (QuotaCycle.Source, Date)? in
+            guard let reset = cycle.reset else { return nil }
+            return (cycle.source, reset)
+        }
+        guard candidates.count >= 2 else { return nil }
+        let now = Date()
+        return candidates.min { lhs, rhs in
+            resetPriority(lhs.1, now: now) < resetPriority(rhs.1, now: now)
+        }?.0
+    }
+
+    private func resetPriority(_ date: Date, now: Date) -> TimeInterval {
+        let delta = date.timeIntervalSince(now)
+        if delta >= 0 {
+            return delta
+        }
+        return abs(delta) + 86_400
+    }
+
+    private func cycleUsageText(_ cycle: QuotaCycle) -> String {
+        let usedText = cycle.used.map(formatValue)
+        let totalText = cycle.total.map(formatValue)
+        let remainingText = cycle.remaining.map(formatValue)
+
+        if let usedText, let totalText, let remainingText {
+            return "已用 \(usedText)/\(totalText) · 余 \(remainingText)"
+        }
+        if let usedText, let totalText {
+            return "已用 \(usedText)/\(totalText)"
+        }
+        if let remainingText {
+            return "剩余 \(remainingText)"
+        }
+        if let usedText {
+            return "已用 \(usedText)"
+        }
+        if let totalText {
+            return "总额 \(totalText)"
+        }
+        return "暂无额度数据"
+    }
+
+    private func percentageColor(_ value: Double) -> Color {
+        if value > 90 { return .red }
+        if value > 70 { return .orange }
+        if value > 50 { return .yellow }
+        return .blue
+    }
+
+    private struct QuotaCycle: Identifiable {
+        enum Source: String {
+            case primary
+            case secondary
+        }
+
+        let source: Source
+        let used: Double?
+        let total: Double?
+        let remaining: Double?
+        let reset: Date?
+
+        var id: String { source.rawValue }
+
+        var hasData: Bool {
+            used != nil || total != nil || remaining != nil || reset != nil
+        }
+
+        var percentage: Double? {
+            guard let used, let total, total > 0 else { return nil }
+            return min(max(used / total * 100, 0), 100)
+        }
     }
 }
