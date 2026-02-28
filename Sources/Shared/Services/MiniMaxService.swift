@@ -129,6 +129,7 @@ struct UsageResult {
     var monthlyUsed: Double?
     var monthlyRefreshTime: Date?
     var nextRefreshTime: Date?
+    var subscriptionPlan: String? = nil
 }
 
 protocol UsageService {
@@ -481,9 +482,15 @@ final class GLMService: UsageService {
         let startTime = dateFormatter.string(from: startOfDay)
         let endTime = dateFormatter.string(from: endOfDay)
         
-        let urlString = "\(baseURL)/api/monitor/usage/model-usage?startTime=\(startTime)&endTime=\(endTime)"
+        guard var components = URLComponents(string: "\(baseURL)/api/monitor/usage/model-usage") else {
+            throw APIError.invalidURL
+        }
+        components.queryItems = [
+            URLQueryItem(name: "startTime", value: startTime),
+            URLQueryItem(name: "endTime", value: endTime)
+        ]
         
-        guard let url = URL(string: urlString) else {
+        guard let url = components.url else {
             throw APIError.invalidURL
         }
         
@@ -727,6 +734,459 @@ final class OpenAIService: UsageService {
     }
 }
 
+// MARK: - ChatGPT (Web Subscription) Service
+
+final class ChatGPTService: UsageService {
+    let provider: APIProvider = .chatGPT
+    
+    func fetchUsage(apiKey: String) async throws -> UsageResult {
+        guard !apiKey.isEmpty else {
+            throw APIError.noAPIKey
+        }
+        
+        let accessToken = try await resolveAccessToken(from: apiKey)
+        let jwtClaims = decodeJWTPayload(accessToken)
+        async let planInfo = fetchPlanInfo(accessToken: accessToken)
+        async let limitsInfo = fetchChatRequirements(accessToken: accessToken)
+        let (planJSON, limitsJSON) = await (planInfo, limitsInfo)
+        
+        var tokenRemaining: Double?
+        var tokenUsed: Double?
+        var tokenTotal: Double?
+        var refreshTime: Date?
+        
+        var monthlyRemaining: Double?
+        var monthlyUsed: Double?
+        var monthlyTotal: Double?
+        var monthlyRefreshTime: Date?
+        var subscriptionPlan: String?
+        
+        var hasAnyData = false
+        
+        if let limitsJSON {
+            Logger.log("ChatGPT limits response: \(limitsJSON)")
+            
+            if let messageScope = findBestQuotaContainer(in: limitsJSON, preferredKeywords: ["message", "cap"]) {
+                let parsed = parseQuota(from: messageScope)
+                monthlyRemaining = parsed.remaining
+                monthlyUsed = parsed.used
+                monthlyTotal = parsed.total
+                monthlyRefreshTime = parsed.resetAt
+                hasAnyData = hasAnyData || parsed.hasData
+            }
+            
+            if let tokenScope = findBestQuotaContainer(in: limitsJSON, preferredKeywords: ["token"]) {
+                let parsed = parseQuota(from: tokenScope)
+                tokenRemaining = parsed.remaining
+                tokenUsed = parsed.used
+                tokenTotal = parsed.total
+                refreshTime = parsed.resetAt
+                hasAnyData = hasAnyData || parsed.hasData
+            }
+            
+            if !hasAnyData {
+                let parsed = parseQuota(from: limitsJSON)
+                tokenRemaining = parsed.remaining
+                tokenUsed = parsed.used
+                tokenTotal = parsed.total
+                refreshTime = parsed.resetAt
+                hasAnyData = parsed.hasData
+            }
+        }
+        
+        if let planJSON {
+            Logger.log("ChatGPT plan response: \(planJSON)")
+            let plan = parsePlanInfo(planJSON)
+            if subscriptionPlan == nil {
+                subscriptionPlan = plan.planType
+            }
+            
+            if !hasAnyData, let isActive = plan.isActive {
+                // Keep subscription state, but do not fabricate numeric quota values.
+                if subscriptionPlan == nil {
+                    subscriptionPlan = isActive ? "active" : "free"
+                }
+                if monthlyRefreshTime == nil {
+                    monthlyRefreshTime = plan.renewalDate
+                }
+                hasAnyData = true
+            } else if !hasAnyData, let planType = plan.planType {
+                subscriptionPlan = planType
+                monthlyRefreshTime = plan.renewalDate
+                hasAnyData = true
+            } else if monthlyRefreshTime == nil {
+                monthlyRefreshTime = plan.renewalDate
+            }
+        }
+        
+        // Fallback: newer tokens already embed chatgpt_plan_type in JWT claims.
+        // This keeps subscription detection working even if Web internal endpoints change.
+        if !hasAnyData, let jwtPlanType = parsePlanTypeFromJWTClaims(jwtClaims) {
+            let normalized = jwtPlanType.lowercased()
+            subscriptionPlan = normalized
+            if monthlyRefreshTime == nil {
+                monthlyRefreshTime = parseJWTExpiry(jwtClaims)
+            }
+            hasAnyData = true
+            Logger.log("ChatGPT: using JWT fallback plan_type=\(normalized)")
+        }
+        
+        guard hasAnyData else {
+            throw APIError.networkError(NSError(
+                domain: "ChatGPT",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "未能解析ChatGPT订阅/额度信息（accessToken 可能有效，但网页内部接口返回结构已变化）"]
+            ))
+        }
+        
+        return UsageResult(
+            remaining: tokenRemaining,
+            used: tokenUsed,
+            total: tokenTotal,
+            refreshTime: refreshTime,
+            monthlyRemaining: monthlyRemaining,
+            monthlyTotal: monthlyTotal,
+            monthlyUsed: monthlyUsed,
+            monthlyRefreshTime: monthlyRefreshTime,
+            nextRefreshTime: monthlyRefreshTime ?? refreshTime,
+            subscriptionPlan: subscriptionPlan
+        )
+    }
+    
+    private func resolveAccessToken(from rawInput: String) async throws -> String {
+        let input = rawInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !input.isEmpty else { throw APIError.noAPIKey }
+        
+        if looksLikeJWT(input) {
+            return input
+        }
+        
+        let cookieHeader = input.contains("=") ? input : "__Secure-next-auth.session-token=\(input)"
+        
+        for urlString in ["https://chatgpt.com/api/auth/session", "https://chat.openai.com/api/auth/session"] {
+            guard let url = URL(string: urlString) else { continue }
+            var request = URLRequest(url: url)
+            request.httpMethod = "GET"
+            request.timeoutInterval = 15
+            request.setValue(cookieHeader, forHTTPHeaderField: "Cookie")
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { continue }
+                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let accessToken = json["accessToken"] as? String,
+                   !accessToken.isEmpty {
+                    Logger.log("ChatGPT: resolved accessToken via session cookie")
+                    return accessToken
+                }
+            } catch {
+                Logger.log("ChatGPT auth/session failed: \(error.localizedDescription)")
+            }
+        }
+        
+        throw APIError.networkError(NSError(
+            domain: "ChatGPT",
+            code: -2,
+            userInfo: [NSLocalizedDescriptionKey: "无法从 session cookie 换取 ChatGPT accessToken"]
+        ))
+    }
+    
+    private func fetchPlanInfo(accessToken: String) async -> [String: Any]? {
+        let urls = [
+            "https://chatgpt.com/backend-api/accounts/check/v4-2023-04-27",
+            "https://chatgpt.com/backend-api/accounts/check",
+            "https://chat.openai.com/backend-api/accounts/check/v4-2023-04-27"
+        ]
+        
+        for urlString in urls {
+            guard let url = URL(string: urlString) else { continue }
+            if let json = await performJSONRequest(url: url, method: "GET", accessToken: accessToken) {
+                return json
+            }
+        }
+        
+        return nil
+    }
+    
+    private func fetchChatRequirements(accessToken: String) async -> [String: Any]? {
+        let urls = [
+            "https://chatgpt.com/backend-api/sentinel/chat-requirements",
+            "https://chat.openai.com/backend-api/sentinel/chat-requirements"
+        ]
+        
+        let body = try? JSONSerialization.data(withJSONObject: [
+            "conversation_mode_kind": "primary_assistant"
+        ])
+        
+        for urlString in urls {
+            guard let url = URL(string: urlString) else { continue }
+            if let json = await performJSONRequest(url: url, method: "POST", accessToken: accessToken, body: body) {
+                return json
+            }
+            if let json = await performJSONRequest(url: url, method: "GET", accessToken: accessToken) {
+                return json
+            }
+        }
+        
+        return nil
+    }
+    
+    private func performJSONRequest(url: URL, method: String, accessToken: String, body: Data? = nil) async -> [String: Any]? {
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.timeoutInterval = 15
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(UUID().uuidString.lowercased(), forHTTPHeaderField: "oai-device-id")
+        if let body {
+            request.httpBody = body
+        }
+        
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else { return nil }
+            Logger.log("ChatGPT \(method) \(url.path): HTTP \(http.statusCode)")
+            guard (200..<300).contains(http.statusCode) else { return nil }
+            
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                return json
+            }
+        } catch {
+            Logger.log("ChatGPT request failed \(url.path): \(error.localizedDescription)")
+        }
+        
+        return nil
+    }
+    
+    private func looksLikeJWT(_ value: String) -> Bool {
+        let parts = value.split(separator: ".")
+        return parts.count == 3 && value.count > 40
+    }
+    
+    private func parsePlanInfo(_ json: [String: Any]) -> (isActive: Bool?, renewalDate: Date?, planType: String?) {
+        let isActive = findFirstBool(in: json, keys: [
+            "is_paid_subscription_active",
+            "has_active_subscription",
+            "subscription_active",
+            "is_active"
+        ])
+        
+        let planType = findFirstString(in: json, keys: [
+            "chatgpt_plan_type",
+            "plan_type",
+            "subscription_plan",
+            "tier"
+        ])
+        
+        let renewalDate =
+            findFirstDate(in: json, keys: ["next_billing_date", "renewal_date", "renews_at", "expires_at"]) ??
+            findFirstTimestampDate(in: json, keys: ["next_billing_date_ts", "renews_at_ts", "expires_at_ts"])
+        
+        return (isActive, renewalDate, planType)
+    }
+    
+    private func findBestQuotaContainer(in json: [String: Any], preferredKeywords: [String]) -> [String: Any]? {
+        var best: (score: Int, dict: [String: Any])?
+        walkJSON(json) { dict in
+            let lowerKeys = dict.keys.map { $0.lowercased() }
+            let keywordScore = preferredKeywords.reduce(0) { partial, keyword in
+                partial + lowerKeys.filter { $0.contains(keyword) }.count
+            }
+            let hasQuotaSignals = lowerKeys.contains(where: {
+                $0.contains("remaining") || $0.contains("limit") || $0.contains("cap") || $0 == "used" || $0.contains("reset")
+            })
+            guard hasQuotaSignals else { return }
+            let score = keywordScore + 1
+            if best == nil || score > best!.score {
+                best = (score, dict)
+            }
+        }
+        return best?.dict
+    }
+    
+    private func parseQuota(from dict: [String: Any]) -> (remaining: Double?, used: Double?, total: Double?, resetAt: Date?, hasData: Bool) {
+        let remaining = findFirstNumber(in: dict, keys: [
+            "remaining_tokens", "tokens_remaining", "remaining_token", "remaining",
+            "remaining_messages", "messages_remaining"
+        ])
+        let used = findFirstNumber(in: dict, keys: [
+            "used_tokens", "tokens_used", "used", "consumed", "used_messages", "messages_used"
+        ])
+        let total = findFirstNumber(in: dict, keys: [
+            "max_tokens", "token_limit", "tokens_limit", "limit", "cap", "message_cap",
+            "max_messages", "messages_limit", "total"
+        ])
+        let resetAt =
+            findFirstDate(in: dict, keys: ["reset_at", "resets_at", "next_reset_at"]) ??
+            findFirstTimestampDate(in: dict, keys: ["reset_time", "reset_ts", "reset_at_ts"])
+        
+        let finalUsed: Double?
+        let finalRemaining: Double?
+        if let total, let remaining, used == nil {
+            finalUsed = max(0, total - remaining)
+            finalRemaining = remaining
+        } else if let total, let used, remaining == nil {
+            finalUsed = used
+            finalRemaining = max(0, total - used)
+        } else {
+            finalUsed = used
+            finalRemaining = remaining
+        }
+        
+        let hasData = finalRemaining != nil || finalUsed != nil || total != nil || resetAt != nil
+        return (finalRemaining, finalUsed, total, resetAt, hasData)
+    }
+    
+    private func walkJSON(_ value: Any, visitor: ([String: Any]) -> Void) {
+        if let dict = value as? [String: Any] {
+            visitor(dict)
+            for child in dict.values {
+                walkJSON(child, visitor: visitor)
+            }
+        } else if let array = value as? [Any] {
+            for child in array {
+                walkJSON(child, visitor: visitor)
+            }
+        }
+    }
+    
+    private func findFirstNumber(in root: [String: Any], keys: [String]) -> Double? {
+        let keySet = Set(keys.map { $0.lowercased() })
+        var result: Double?
+        walkJSON(root) { dict in
+            guard result == nil else { return }
+            for (key, value) in dict where keySet.contains(key.lowercased()) {
+                if let parsed = parseNumber(value) {
+                    result = parsed
+                    return
+                }
+            }
+        }
+        return result
+    }
+    
+    private func findFirstBool(in root: [String: Any], keys: [String]) -> Bool? {
+        let keySet = Set(keys.map { $0.lowercased() })
+        var result: Bool?
+        walkJSON(root) { dict in
+            guard result == nil else { return }
+            for (key, value) in dict where keySet.contains(key.lowercased()) {
+                if let boolValue = value as? Bool {
+                    result = boolValue
+                    return
+                }
+                if let numberValue = value as? NSNumber {
+                    result = numberValue.boolValue
+                    return
+                }
+                if let stringValue = value as? String {
+                    let lower = stringValue.lowercased()
+                    if ["true", "1", "yes", "active"].contains(lower) {
+                        result = true
+                        return
+                    }
+                    if ["false", "0", "no", "inactive"].contains(lower) {
+                        result = false
+                        return
+                    }
+                }
+            }
+        }
+        return result
+    }
+    
+    private func findFirstString(in root: [String: Any], keys: [String]) -> String? {
+        let keySet = Set(keys.map { $0.lowercased() })
+        var result: String?
+        walkJSON(root) { dict in
+            guard result == nil else { return }
+            for (key, value) in dict where keySet.contains(key.lowercased()) {
+                if let stringValue = value as? String, !stringValue.isEmpty {
+                    result = stringValue
+                    return
+                }
+            }
+        }
+        return result
+    }
+    
+    private func findFirstDate(in root: [String: Any], keys: [String]) -> Date? {
+        let keySet = Set(keys.map { $0.lowercased() })
+        let iso = ISO8601DateFormatter()
+        var result: Date?
+        walkJSON(root) { dict in
+            guard result == nil else { return }
+            for (key, value) in dict where keySet.contains(key.lowercased()) {
+                guard let stringValue = value as? String else { continue }
+                if let date = iso.date(from: stringValue) {
+                    result = date
+                    return
+                }
+                let formatter = DateFormatter()
+                formatter.locale = Locale(identifier: "en_US_POSIX")
+                formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+                if let date = formatter.date(from: stringValue) {
+                    result = date
+                    return
+                }
+            }
+        }
+        return result
+    }
+    
+    private func findFirstTimestampDate(in root: [String: Any], keys: [String]) -> Date? {
+        let keySet = Set(keys.map { $0.lowercased() })
+        var result: Date?
+        walkJSON(root) { dict in
+            guard result == nil else { return }
+            for (key, value) in dict where keySet.contains(key.lowercased()) {
+                guard let ts = parseNumber(value), ts > 0 else { continue }
+                result = ts > 10_000_000_000 ? Date(timeIntervalSince1970: ts / 1000) : Date(timeIntervalSince1970: ts)
+                return
+            }
+        }
+        return result
+    }
+    
+    private func decodeJWTPayload(_ token: String) -> [String: Any]? {
+        let parts = token.split(separator: ".")
+        guard parts.count == 3 else { return nil }
+        var base64 = String(parts[1])
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        while base64.count % 4 != 0 {
+            base64.append("=")
+        }
+        guard let data = Data(base64Encoded: base64),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        return json
+    }
+    
+    private func parsePlanTypeFromJWTClaims(_ claims: [String: Any]?) -> String? {
+        guard let claims else { return nil }
+        
+        if let auth = claims["https://api.openai.com/auth"] as? [String: Any],
+           let planType = auth["chatgpt_plan_type"] as? String,
+           !planType.isEmpty {
+            return planType
+        }
+        
+        return findFirstString(in: claims, keys: ["chatgpt_plan_type", "plan_type"])
+    }
+    
+    private func parseJWTExpiry(_ claims: [String: Any]?) -> Date? {
+        guard let claims else { return nil }
+        if let exp = parseNumber(claims["exp"]), exp > 0 {
+            return Date(timeIntervalSince1970: exp)
+        }
+        return nil
+    }
+}
+
 // MARK: - KIMI Service
 
 final class KIMIService: UsageService {
@@ -736,8 +1196,34 @@ final class KIMIService: UsageService {
         guard !apiKey.isEmpty else {
             throw APIError.noAPIKey
         }
+
+        var preferredAuthError: APIError?
+
+        for endpointKind in preferredOfficialEndpoints(for: apiKey) {
+            do {
+                let officialResult: UsageResult?
+                switch endpointKind {
+                case .kimiCode:
+                    officialResult = try await fetchKimiCodeUsage(apiKey: apiKey)
+                case .moonshotOpenPlatform:
+                    officialResult = try await fetchMoonshotOpenPlatformBalance(apiKey: apiKey)
+                }
+
+                if let officialResult, hasUsagePayload(officialResult) {
+                    Logger.log("KIMI: Using official \(endpointKind.logLabel) endpoint")
+                    return officialResult
+                }
+            } catch let error as APIError {
+                if preferredAuthError == nil, isAuthError(error) {
+                    preferredAuthError = error
+                }
+                Logger.log("KIMI official \(endpointKind.logLabel) failed: \(error.localizedDescription)")
+            } catch {
+                Logger.log("KIMI official \(endpointKind.logLabel) failed: \(error.localizedDescription)")
+            }
+        }
         
-        // KIMI API Base URL
+        // Legacy fallback probing (kept for compatibility)
         let baseURL = "https://api.moonshot.cn"
         
         // Try to fetch wallet/balance info
@@ -821,8 +1307,254 @@ final class KIMIService: UsageService {
         }
         
         Logger.log("KIMI Final Result: remaining=\(String(describing: remaining)), used=\(String(describing: used)), total=\(String(describing: total)), refreshTime=\(String(describing: refreshTime))")
-        
-        return UsageResult(remaining: remaining, used: used, total: total, refreshTime: refreshTime)
+
+        let legacyResult = UsageResult(remaining: remaining, used: used, total: total, refreshTime: refreshTime)
+        if hasUsagePayload(legacyResult) {
+            return legacyResult
+        }
+
+        if let preferredAuthError {
+            throw preferredAuthError
+        }
+
+        throw APIError.networkError(
+            NSError(
+                domain: "KIMI",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "无法获取 KIMI 用量或余额信息"]
+            )
+        )
+    }
+
+    private enum OfficialEndpointKind {
+        case kimiCode
+        case moonshotOpenPlatform
+
+        var logLabel: String {
+            switch self {
+            case .kimiCode:
+                return "Kimi Code"
+            case .moonshotOpenPlatform:
+                return "Moonshot Open Platform"
+            }
+        }
+    }
+
+    private func preferredOfficialEndpoints(for apiKey: String) -> [OfficialEndpointKind] {
+        if isKimiCodeAPIKey(apiKey) {
+            return [.kimiCode, .moonshotOpenPlatform]
+        }
+        return [.moonshotOpenPlatform, .kimiCode]
+    }
+
+    private func isKimiCodeAPIKey(_ apiKey: String) -> Bool {
+        apiKey.hasPrefix("sk-kimi-")
+    }
+
+    private func hasUsagePayload(_ result: UsageResult) -> Bool {
+        result.remaining != nil ||
+        result.used != nil ||
+        result.total != nil ||
+        result.refreshTime != nil ||
+        result.monthlyRemaining != nil ||
+        result.monthlyUsed != nil ||
+        result.monthlyTotal != nil ||
+        result.monthlyRefreshTime != nil ||
+        result.nextRefreshTime != nil ||
+        result.subscriptionPlan != nil
+    }
+
+    private func isAuthError(_ error: APIError) -> Bool {
+        switch error {
+        case .httpError(let code):
+            return code == 401 || code == 403
+        case .httpErrorWithMessage(let code, _):
+            return code == 401 || code == 403
+        default:
+            return false
+        }
+    }
+
+    private func fetchKimiCodeUsage(apiKey: String) async throws -> UsageResult? {
+        let json = try await fetchKIMIJSON(
+            apiKey: apiKey,
+            urlString: "https://api.kimi.com/coding/v1/usages"
+        )
+        Logger.log("KIMI Code /usages Response: \(json)")
+
+        let user = json["user"] as? [String: Any]
+        let membership = user?["membership"] as? [String: Any]
+        let membershipLevel = (membership?["level"] as? String).flatMap(normalizedMembershipLevel)
+
+        let usage = json["usage"] as? [String: Any]
+        let total = parseNumber(usage?["limit"])
+        var used = parseNumber(usage?["used"])
+        var remaining = parseNumber(usage?["remaining"])
+
+        if used == nil, let t = total, let r = remaining {
+            used = max(0, t - r)
+        }
+        if remaining == nil, let t = total, let u = used {
+            remaining = max(0, t - u)
+        }
+
+        let refreshTime = parseKIMIDate(usage?["resetTime"] ?? usage?["reset_time"])
+
+        var nextRefreshTime: Date?
+        if let limits = json["limits"] as? [[String: Any]] {
+            for limit in limits {
+                let detail = (limit["detail"] as? [String: Any]) ?? limit
+                let candidate = parseKIMIDate(detail["resetTime"] ?? detail["reset_time"])
+                if let candidate {
+                    if nextRefreshTime == nil || candidate < nextRefreshTime! {
+                        nextRefreshTime = candidate
+                    }
+                }
+            }
+        }
+
+        return UsageResult(
+            remaining: remaining,
+            used: used,
+            total: total,
+            refreshTime: refreshTime,
+            monthlyRemaining: nil,
+            monthlyTotal: nil,
+            monthlyUsed: nil,
+            monthlyRefreshTime: nil,
+            nextRefreshTime: nextRefreshTime,
+            subscriptionPlan: membershipLevel
+        )
+    }
+
+    private func fetchMoonshotOpenPlatformBalance(apiKey: String) async throws -> UsageResult? {
+        let baseURLs = [
+            "https://api.moonshot.cn",
+            "https://api.moonshot.ai"
+        ]
+
+        var lastError: APIError?
+
+        for baseURL in baseURLs {
+            do {
+                let json = try await fetchKIMIJSON(
+                    apiKey: apiKey,
+                    urlString: "\(baseURL)/v1/users/me/balance"
+                )
+                Logger.log("KIMI Moonshot /users/me/balance Response (\(baseURL)): \(json)")
+
+                guard let data = json["data"] as? [String: Any] else {
+                    continue
+                }
+
+                let available = parseNumber(data["available_balance"]) ?? parseNumber(data["balance"])
+                let voucher = parseNumber(data["voucher_balance"])
+                let cash = parseNumber(data["cash_balance"])
+
+                // Open platform balance endpoint exposes remaining balance only (CNY), not token used/total.
+                return UsageResult(
+                    remaining: available,
+                    used: nil,
+                    total: nil,
+                    refreshTime: nil,
+                    monthlyRemaining: voucher,
+                    monthlyTotal: nil,
+                    monthlyUsed: nil,
+                    monthlyRefreshTime: nil,
+                    nextRefreshTime: nil,
+                    subscriptionPlan: cash != nil ? "Open Platform" : nil
+                )
+            } catch let error as APIError {
+                lastError = error
+                // Try the alternate region host on 404/5xx/network-ish API errors.
+                switch error {
+                case .httpError(let code) where code == 404 || code >= 500:
+                    continue
+                case .httpErrorWithMessage(let code, _) where code == 404 || code >= 500:
+                    continue
+                default:
+                    throw error
+                }
+            }
+        }
+
+        if let lastError {
+            throw lastError
+        }
+        return nil
+    }
+
+    private func fetchKIMIJSON(apiKey: String, urlString: String) async throws -> [String: Any] {
+        guard let url = URL(string: urlString) else {
+            throw APIError.invalidURL
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 10
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw APIError.invalidResponse
+            }
+
+            guard (200...299).contains(httpResponse.statusCode) else {
+                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    let errorMessage =
+                        ((json["error"] as? [String: Any])?["message"] as? String) ??
+                        (json["message"] as? String)
+                    if let errorMessage {
+                        throw APIError.httpErrorWithMessage(httpResponse.statusCode, errorMessage)
+                    }
+                }
+                throw APIError.httpError(httpResponse.statusCode)
+            }
+
+            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                throw APIError.invalidResponse
+            }
+            return json
+        } catch let error as APIError {
+            throw error
+        } catch {
+            throw APIError.networkError(error)
+        }
+    }
+
+    private func parseKIMIDate(_ raw: Any?) -> Date? {
+        guard let raw else { return nil }
+        let value: String
+        if let string = raw as? String {
+            value = string
+        } else if let number = parseNumber(raw) {
+            // Milliseconds are commonly used in some endpoints.
+            if number > 10_000_000_000 {
+                return Date(timeIntervalSince1970: number / 1000)
+            }
+            return Date(timeIntervalSince1970: number)
+        } else {
+            return nil
+        }
+
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = fractional.date(from: value) {
+            return date
+        }
+
+        let basic = ISO8601DateFormatter()
+        return basic.date(from: value)
+    }
+
+    private func normalizedMembershipLevel(_ raw: String) -> String {
+        raw
+            .replacingOccurrences(of: "LEVEL_", with: "")
+            .replacingOccurrences(of: "_", with: " ")
+            .capitalized
     }
     
     private func fetchWalletInfo(apiKey: String, baseURL: String) async throws -> [String: Any]? {
@@ -929,6 +1661,8 @@ func getService(for provider: APIProvider) -> UsageService {
         return TavilyService()
     case .openAI:
         return OpenAIService()
+    case .chatGPT:
+        return ChatGPTService()
     case .kimi:
         return KIMIService()
     }

@@ -77,6 +77,25 @@ APP_PATH=~/Library/Developer/Xcode/DerivedData/ApiUsageTrackerForMac-*/Build/Pro
 hdiutil create -srcfolder "$APP_PATH" -volname "ApiUsageTrackerForMac" -fs HFS+ -format UDZO ApiUsageTrackerForMac.dmg
 ```
 
+### Automated Verification (No Manual Install)
+
+```bash
+./scripts/auto-verify.sh
+```
+
+This script will automatically:
+- build the app
+- package `API-Tracker-latest.dmg`
+- quit current running app instance
+- mount DMG and launch app from DMG
+- run startup/health/crash checks
+
+Optional environment variables:
+- `CONFIGURATION=Debug|Release`
+- `HEALTH_CHECK_SECONDS=8`
+- `LAUNCH_TIMEOUT_SECONDS=20`
+- `PRINT_APP_LOG_TAIL=1` (disabled by default)
+
 ### Configuration
 
 1. Click the menu bar icon
@@ -177,6 +196,25 @@ xcodebuild -project ApiUsageTrackerForMac.xcodeproj -scheme ApiUsageTrackerForMa
 APP_PATH=~/Library/Developer/Xcode/DerivedData/ApiUsageTrackerForMac-*/Build/Products/Release/API\ Tracker.app
 hdiutil create -srcfolder "$APP_PATH" -volname "ApiUsageTrackerForMac" -fs HFS+ -format UDZO ApiUsageTrackerForMac.dmg
 ```
+
+### 自动验证（无需手动安装）
+
+```bash
+./scripts/auto-verify.sh
+```
+
+脚本会自动完成：
+- 编译应用
+- 打包 `API-Tracker-latest.dmg`
+- 退出当前正在运行的应用
+- 挂载 DMG 并从 DMG 启动应用
+- 执行启动/健康度/崩溃检测
+
+可选环境变量：
+- `CONFIGURATION=Debug|Release`
+- `HEALTH_CHECK_SECONDS=8`
+- `LAUNCH_TIMEOUT_SECONDS=20`
+- `PRINT_APP_LOG_TAIL=1`（默认关闭）
 
 ### 配置说明
 

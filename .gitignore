@@ -3,6 +3,7 @@
 
 # Xcode
 build/
+dist/
 *.xcuserstate
 *.xcuserdatad
 xcuserdata/

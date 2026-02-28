@@ -20,17 +20,21 @@ MacUsageTracker/
 ├── Sources/
 │   ├── App/                     # Main application target
 │   │   ├── MacUsageTrackerApp.swift      # App entry point & AppDelegate
+│   │   ├── ViewModels/
+│   │   │   └── AppViewModel.swift        # Main view model & business logic
 │   │   ├── Views/
 │   │   │   ├── MainView.swift            # Menu bar popover UI
 │   │   │   └── SettingsView.swift        # Settings window UI
-│   │   ├── Services/
-│   │   │   └── AppViewModel.swift        # Main view model & business logic
 │   │   └── Resources/
 │   │       ├── Info.plist                # App Info.plist
 │   │       └── ApiUsageTrackerForMac.entitlements  # App sandbox entitlements
 │   ├── Shared/                  # Shared code between app and widget
-│   │   ├── SharedModels.swift            # Data models, storage, settings
-│   │   └── MiniMaxService.swift          # API service implementations
+│   │   ├── Models/
+│   │   │   └── SharedModels.swift        # Data models, storage, settings
+│   │   ├── Services/
+│   │   │   └── MiniMaxService.swift      # API service implementations
+│   │   └── Security/
+│   │       └── KeychainManager.swift     # API key secure storage wrapper
 │   └── Widget/                  # Widget extension target
 │       ├── UsageWidget.swift             # WidgetKit implementation
 │       ├── Info.plist                    # Widget Info.plist
@@ -183,8 +187,8 @@ HotkeySetting: Struct // keyCode, modifiers
 
 ### Adding a New API Provider
 
-1. Add case to `APIProvider` enum in `SharedModels.swift`
-2. Implement `UsageService` protocol in `MiniMaxService.swift`
+1. Add case to `APIProvider` enum in `Sources/Shared/Models/SharedModels.swift`
+2. Implement `UsageService` protocol in `Sources/Shared/Services/MiniMaxService.swift`
 3. Add provider icon mapping
 4. Update `getService(for:)` factory function
 

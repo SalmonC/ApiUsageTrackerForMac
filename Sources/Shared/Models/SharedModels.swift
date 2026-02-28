@@ -6,6 +6,7 @@ enum APIProvider: String, Codable, CaseIterable, Identifiable {
     case glm = "glm"
     case tavily = "tavily"
     case openAI = "openAI"
+    case chatGPT = "chatGPT"
     case kimi = "kimi"
     
     var id: String { rawValue }
@@ -19,7 +20,9 @@ enum APIProvider: String, Codable, CaseIterable, Identifiable {
         case .tavily:
             return "Tavily"
         case .openAI:
-            return "OpenAI"
+            return "OpenAI API (Token)"
+        case .chatGPT:
+            return "ChatGPT (Subscription)"
         case .kimi:
             return "KIMI (Moonshot)"
         }
@@ -35,8 +38,58 @@ enum APIProvider: String, Codable, CaseIterable, Identifiable {
             return "magnifyingglass"
         case .openAI:
             return "sparkles"
+        case .chatGPT:
+            return "message.badge"
         case .kimi:
             return "moon.stars"
+        }
+    }
+
+    var supportsRemainingQuotaQuery: Bool {
+        switch self {
+        case .glm:
+            return false
+        default:
+            return true
+        }
+    }
+
+    var remainingQuotaQueryUnsupportedReason: String? {
+        switch self {
+        case .glm:
+            return "智谱当前未公开可通过 API Key 直接查询账户余额/Token 余量的稳定接口；现有监控端点会返回成功状态但不包含有效数据。"
+        default:
+            return nil
+        }
+    }
+
+    static var selectableForNewAccounts: [APIProvider] {
+        allCases.filter(\.supportsRemainingQuotaQuery)
+    }
+
+    static var unsupportedForRemainingQuotaQuery: [APIProvider] {
+        allCases.filter { !$0.supportsRemainingQuotaQuery }
+    }
+}
+
+enum DashboardSortMode: String, Codable, CaseIterable, Identifiable {
+    case manual
+    case risk
+    case provider
+    case name
+    
+    var id: String { rawValue }
+    
+    var displayName: String {
+        switch self {
+        case .manual:
+            return "手动排序"
+        case .risk:
+            return "风险优先"
+        case .provider:
+            return "按平台"
+        case .name:
+            return "按名称"
         }
     }
 }
@@ -142,6 +195,7 @@ struct UsageData: Codable, Equatable {
     var monthlyUsed: Double?           // Monthly used amount
     var monthlyRefreshTime: Date?      // Monthly quota refresh time
     var nextRefreshTime: Date?         // Next refresh time (for limited periods)
+    var subscriptionPlan: String? = nil
     
     var displayRemaining: String {
         guard let remaining = tokenRemaining else { return "--" }
@@ -200,6 +254,28 @@ struct UsageData: Codable, Equatable {
         guard let used = monthlyUsed, let total = monthlyTotal, total > 0 else { return 0 }
         return min(used / total * 100, 100)
     }
+    
+    var displaySubscriptionPlan: String? {
+        guard let subscriptionPlan, !subscriptionPlan.isEmpty else { return nil }
+        switch subscriptionPlan.lowercased() {
+        case "plus":
+            return "Plus"
+        case "pro":
+            return "Pro"
+        case "free":
+            return "Free"
+        case "team":
+            return "Team"
+        case "business":
+            return "Business"
+        case "enterprise":
+            return "Enterprise"
+        case "active":
+            return "Subscribed"
+        default:
+            return subscriptionPlan.capitalized
+        }
+    }
 }
 
 final class Storage {
@@ -209,6 +285,8 @@ final class Storage {
     private let usageKey = "usageData"
     private let settingsKey = "appSettings"
     private let refreshIntervalKey = "widgetRefreshInterval"
+    private let dashboardSortModeKey = "dashboardSortMode"
+    private let dashboardManualOrderKey = "dashboardManualOrder"
     
     private var userDefaults: UserDefaults? {
         UserDefaults(suiteName: suiteName)
@@ -234,14 +312,37 @@ final class Storage {
     
     func saveSettings(_ settings: AppSettings) {
         guard let defaults = userDefaults else { return }
+        let existingSettings = loadSettings(includeAPIKeys: false)
+        let newAccountIDs = Set(settings.accounts.map(\.id))
+        let keychainSnapshot = KeychainManager.shared.loadAPIKeys(for: settings.accounts.map(\.id))
         
-        // Save API keys to Keychain
+        // Remove keys for deleted accounts so they do not linger in Keychain.
+        for oldAccount in existingSettings.accounts where !newAccountIDs.contains(oldAccount.id) {
+            do {
+                try KeychainManager.shared.deleteAPIKey(for: oldAccount.id)
+            } catch {
+                Logger.log("Failed to delete removed account API key from Keychain: \(error)")
+            }
+        }
+        
+        // Save only changed API keys to Keychain to avoid repeated authorization prompts.
         for account in settings.accounts {
+            let existingKey = keychainSnapshot[account.id] ?? ""
+            if account.apiKey == existingKey {
+                continue
+            }
+            
             if !account.apiKey.isEmpty {
                 do {
                     try KeychainManager.shared.saveAPIKey(account.apiKey, for: account.id)
                 } catch {
                     Logger.log("Failed to save API key to Keychain: \(error)")
+                }
+            } else {
+                do {
+                    try KeychainManager.shared.deleteAPIKey(for: account.id)
+                } catch {
+                    Logger.log("Failed to clear API key from Keychain: \(error)")
                 }
             }
         }
@@ -257,16 +358,18 @@ final class Storage {
         }
     }
     
-    func loadSettings() -> AppSettings {
+    func loadSettings(includeAPIKeys: Bool = true) -> AppSettings {
         guard let defaults = userDefaults,
               let data = defaults.data(forKey: settingsKey),
               var decoded = try? JSONDecoder().decode(AppSettings.self, from: data) else {
             return .default
         }
         
-        // Load API keys from Keychain
+        guard includeAPIKeys else { return decoded }
+        
+        let keyMap = KeychainManager.shared.loadAPIKeys(for: decoded.accounts.map(\.id))
         for i in decoded.accounts.indices {
-            if let keychainKey = KeychainManager.shared.loadAPIKey(for: decoded.accounts[i].id) {
+            if let keychainKey = keyMap[decoded.accounts[i].id] {
                 decoded.accounts[i].apiKey = keychainKey
             }
         }
@@ -280,6 +383,33 @@ final class Storage {
     }
     
     func loadRefreshInterval() -> Int {
-        userDefaults?.integer(forKey: refreshIntervalKey) ?? 5
+        let interval = userDefaults?.integer(forKey: refreshIntervalKey) ?? 5
+        return interval > 0 ? interval : 5
+    }
+    
+    func saveDashboardSortMode(_ mode: DashboardSortMode) {
+        userDefaults?.set(mode.rawValue, forKey: dashboardSortModeKey)
+    }
+    
+    func loadDashboardSortMode() -> DashboardSortMode {
+        guard
+            let rawValue = userDefaults?.string(forKey: dashboardSortModeKey),
+            let mode = DashboardSortMode(rawValue: rawValue)
+        else {
+            return .manual
+        }
+        return mode
+    }
+    
+    func saveDashboardManualOrder(_ ids: [UUID]) {
+        let rawIDs = ids.map(\.uuidString)
+        userDefaults?.set(rawIDs, forKey: dashboardManualOrderKey)
+    }
+    
+    func loadDashboardManualOrder() -> [UUID] {
+        guard let rawIDs = userDefaults?.stringArray(forKey: dashboardManualOrderKey) else {
+            return []
+        }
+        return rawIDs.compactMap(UUID.init(uuidString:))
     }
 }
