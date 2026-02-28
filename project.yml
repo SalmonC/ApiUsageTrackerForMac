@@ -8,8 +8,8 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "1.0.0"
-    CURRENT_PROJECT_VERSION: "1"
+    MARKETING_VERSION: "0.9.0"
+    CURRENT_PROJECT_VERSION: "17"
     SWIFT_VERSION: "5.9"
     MACOSX_DEPLOYMENT_TARGET: "14.0"
     ENABLE_HARDENED_RUNTIME: NO
@@ -28,7 +28,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.mactools.apiusagetracker
-        PRODUCT_NAME: API Tracker
+        PRODUCT_NAME: QuotaPulse
         INFOPLIST_FILE: Sources/App/Resources/Info.plist
         CODE_SIGN_ENTITLEMENTS: Sources/App/Resources/ApiUsageTrackerForMac.entitlements
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks"
@@ -59,7 +59,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.mactools.apiusagetracker.widget
-        PRODUCT_NAME: API Tracker Widget
+        PRODUCT_NAME: QuotaPulse Widget
         INFOPLIST_FILE: Sources/Widget/Info.plist
         CODE_SIGN_ENTITLEMENTS: Sources/Widget/UsageWidget.entitlements
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks @executable_path/../../../../Frameworks"

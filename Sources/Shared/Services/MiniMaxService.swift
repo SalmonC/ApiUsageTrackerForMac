@@ -130,6 +130,8 @@ struct UsageResult {
     var monthlyRefreshTime: Date?
     var nextRefreshTime: Date?
     var subscriptionPlan: String? = nil
+    var primaryCycleIsPercentage: Bool? = nil
+    var secondaryCycleIsPercentage: Bool? = nil
 }
 
 protocol UsageService {
@@ -592,6 +594,7 @@ final class TavilyService: UsageService {
                 var remaining: Double = 0
                 var total: Double = 0
                 var used: Double = 0
+                let refreshTime = parseTavilyRefreshTime(in: json)
                 
                 if let keyObj = json["key"] as? [String: Any] {
                     if let limit = parseNumber(keyObj["limit"]), limit > 0 {
@@ -613,8 +616,8 @@ final class TavilyService: UsageService {
                 
                 remaining = max(0, total - used)
                 
-                Logger.log("Tavily API Success: remaining=\(remaining), used=\(used), total=\(total)")
-                return UsageResult(remaining: remaining, used: used, total: total, refreshTime: nil)
+                Logger.log("Tavily API Success: remaining=\(remaining), used=\(used), total=\(total), refreshTime=\(String(describing: refreshTime))")
+                return UsageResult(remaining: remaining, used: used, total: total, refreshTime: refreshTime)
             }
             
             throw APIError.decodingError(NSError(domain: "", code: 0))
@@ -624,6 +627,75 @@ final class TavilyService: UsageService {
             Logger.log("Tavily API Error: \(error.localizedDescription)")
             throw APIError.networkError(error)
         }
+    }
+
+    private func parseTavilyRefreshTime(in json: [String: Any]) -> Date? {
+        let candidateScopes: [[String: Any]] = [
+            json,
+            json["key"] as? [String: Any] ?? [:],
+            json["account"] as? [String: Any] ?? [:]
+        ]
+        let dateKeys = [
+            "next_reset",
+            "next_reset_at",
+            "reset_at",
+            "renewal_at",
+            "renews_at",
+            "period_end",
+            "period_end_at",
+            "billing_cycle_end",
+            "quota_reset_at",
+            "nextRefreshTime",
+            "refresh_time",
+            "refreshTime"
+        ]
+
+        for scope in candidateScopes where !scope.isEmpty {
+            for key in dateKeys {
+                if let date = parseTavilyDate(scope[key]) {
+                    return date
+                }
+            }
+        }
+        return nil
+    }
+
+    private func parseTavilyDate(_ raw: Any?) -> Date? {
+        guard let raw else { return nil }
+
+        if let number = parseNumber(raw), number > 0 {
+            if number > 10_000_000_000 {
+                return Date(timeIntervalSince1970: number / 1000)
+            }
+            return Date(timeIntervalSince1970: number)
+        }
+
+        guard let text = raw as? String, !text.isEmpty else { return nil }
+
+        let isoFractional = ISO8601DateFormatter()
+        isoFractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = isoFractional.date(from: text) {
+            return date
+        }
+
+        let isoBasic = ISO8601DateFormatter()
+        if let date = isoBasic.date(from: text) {
+            return date
+        }
+
+        let fallback = DateFormatter()
+        fallback.locale = Locale(identifier: "en_US_POSIX")
+        fallback.timeZone = TimeZone(secondsFromGMT: 0)
+        fallback.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        if let date = fallback.date(from: text) {
+            return date
+        }
+
+        let dateOnly = DateFormatter()
+        dateOnly.locale = Locale(identifier: "en_US_POSIX")
+        dateOnly.timeZone = TimeZone(secondsFromGMT: 0)
+        dateOnly.dateFormat = "yyyy-MM-dd"
+        return dateOnly.date(from: text)
     }
 }
 
@@ -1423,6 +1495,36 @@ final class KIMIService: UsageService {
         let total = parseNumber(usage?["limit"])
         var used = parseNumber(usage?["used"])
         var remaining = parseNumber(usage?["remaining"])
+        var primaryCycleIsPercentage = false
+
+        if total == nil, used == nil, remaining == nil {
+            let usedPercent = parsePercentageValue(
+                in: usage,
+                keys: [
+                    "used_percent",
+                    "usage_percent",
+                    "usage_percentage",
+                    "used_percentage",
+                    "usage_ratio"
+                ]
+            )
+            let remainingPercent = parsePercentageValue(
+                in: usage,
+                keys: [
+                    "remaining_percent",
+                    "remain_percent",
+                    "remaining_percentage",
+                    "remain_ratio"
+                ]
+            )
+
+            if let usedPercent = normalizePercent(usedPercent ?? (remainingPercent != nil ? 100 - (remainingPercent ?? 0) : nil)),
+               let remainingPercent = normalizePercent(remainingPercent ?? (100 - usedPercent)) {
+                used = usedPercent
+                remaining = remainingPercent
+                primaryCycleIsPercentage = true
+            }
+        }
 
         if used == nil, let t = total, let r = remaining {
             used = max(0, t - r)
@@ -1455,7 +1557,9 @@ final class KIMIService: UsageService {
             monthlyUsed: selectedLimitSnapshot?.used,
             monthlyRefreshTime: selectedLimitSnapshot?.resetAt,
             nextRefreshTime: selectedLimitSnapshot?.resetAt ?? nextRefreshTime,
-            subscriptionPlan: membershipLevel
+            subscriptionPlan: membershipLevel,
+            primaryCycleIsPercentage: primaryCycleIsPercentage ? true : nil,
+            secondaryCycleIsPercentage: selectedLimitSnapshot?.isPercentageOnly == true ? true : nil
         )
     }
 
@@ -1587,6 +1691,7 @@ final class KIMIService: UsageService {
         var used: Double?
         var total: Double?
         var resetAt: Date?
+        var isPercentageOnly: Bool = false
 
         var hasAnyData: Bool {
             remaining != nil || used != nil || total != nil || resetAt != nil
@@ -1611,12 +1716,53 @@ final class KIMIService: UsageService {
                 parseNumber(detail["available"])
             var used = parseNumber(detail["used"]) ??
                 parseNumber(detail["consumed"])
+            var normalizedTotal = total
+            var isPercentageOnly = false
 
-            if used == nil, let total, let remaining {
-                used = max(0, total - remaining)
+            if normalizedTotal == nil {
+                let usedPercent =
+                    parsePercentageValue(in: detail, keys: [
+                        "used_percent",
+                        "usage_percent",
+                        "used_percentage",
+                        "usage_percentage",
+                        "usage_ratio"
+                    ]) ??
+                    parsePercentageValue(in: limit, keys: [
+                        "used_percent",
+                        "usage_percent",
+                        "used_percentage",
+                        "usage_percentage",
+                        "usage_ratio"
+                    ])
+                let remainingPercent =
+                    parsePercentageValue(in: detail, keys: [
+                        "remaining_percent",
+                        "remain_percent",
+                        "remaining_percentage",
+                        "remain_ratio"
+                    ]) ??
+                    parsePercentageValue(in: limit, keys: [
+                        "remaining_percent",
+                        "remain_percent",
+                        "remaining_percentage",
+                        "remain_ratio"
+                    ])
+
+                if let normalizedUsed = normalizePercent(usedPercent ?? (remainingPercent != nil ? 100 - (remainingPercent ?? 0) : nil)),
+                   let normalizedRemaining = normalizePercent(remainingPercent ?? (100 - normalizedUsed)) {
+                    used = normalizedUsed
+                    remaining = normalizedRemaining
+                    normalizedTotal = 100
+                    isPercentageOnly = true
+                }
             }
-            if remaining == nil, let total, let used {
-                remaining = max(0, total - used)
+
+            if used == nil, let normalizedTotal, let remaining {
+                used = max(0, normalizedTotal - remaining)
+            }
+            if remaining == nil, let normalizedTotal, let used {
+                remaining = max(0, normalizedTotal - used)
             }
 
             let resetAt =
@@ -1626,8 +1772,9 @@ final class KIMIService: UsageService {
             let snapshot = KimiLimitSnapshot(
                 remaining: remaining,
                 used: used,
-                total: total,
-                resetAt: resetAt
+                total: normalizedTotal,
+                resetAt: resetAt,
+                isPercentageOnly: isPercentageOnly
             )
 
             if snapshot.hasAnyData {
@@ -1668,6 +1815,29 @@ final class KIMIService: UsageService {
             return delta
         }
         return abs(delta) + 86_400
+    }
+
+    private func parsePercentageValue(in dict: [String: Any]?, keys: [String]) -> Double? {
+        guard let dict else { return nil }
+        let normalizedKeys = Set(keys.map { $0.lowercased() })
+
+        for (key, value) in dict where normalizedKeys.contains(key.lowercased()) {
+            if let number = parseNumber(value) {
+                return normalizePercent(number)
+            }
+            if let string = value as? String {
+                let stripped = string.replacingOccurrences(of: "%", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+                if let number = Double(stripped) {
+                    return normalizePercent(number)
+                }
+            }
+        }
+        return nil
+    }
+
+    private func normalizePercent(_ value: Double?) -> Double? {
+        guard let value else { return nil }
+        return min(max(value, 0), 100)
     }
 
     private func normalizedMembershipLevel(_ raw: String) -> String {

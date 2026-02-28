@@ -8,11 +8,14 @@ final class AppViewModel: ObservableObject {
     @Published var isLoading = false
     @Published var settings: AppSettings = .default
     @Published var secondsUntilTokenRefresh: Int = 0
+    @Published var secondsUntilDataRefresh: Int = 0
     @Published var refreshingAccountIDs: Set<UUID> = []
     @Published var dashboardSortMode: DashboardSortMode = Storage.shared.loadDashboardSortMode()
     @Published var dashboardManualOrder: [UUID] = Storage.shared.loadDashboardManualOrder()
     
     private var refreshTimer: Timer?
+    private var cycleLearningState: [String: CycleLearningState] = Storage.shared.loadCycleLearningState()
+    private var nextAutoRefreshDate: Date?
     var onSettingsSaved: (() -> Void)?
     var onOpenSettings: (() -> Void)?
     
@@ -48,6 +51,11 @@ final class AppViewModel: ObservableObject {
                 } else {
                     self.updateTokenRefreshCountdown()
                 }
+                if self.secondsUntilDataRefresh > 0 {
+                    self.secondsUntilDataRefresh -= 1
+                } else {
+                    self.updateDataRefreshCountdown()
+                }
             }
         }
     }
@@ -70,6 +78,20 @@ final class AppViewModel: ObservableObject {
         } else {
             secondsUntilTokenRefresh = 0
         }
+    }
+
+    private func updateDataRefreshCountdown() {
+        guard let nextAutoRefreshDate else {
+            secondsUntilDataRefresh = 0
+            return
+        }
+        let seconds = Int(nextAutoRefreshDate.timeIntervalSince(Date()))
+        secondsUntilDataRefresh = max(seconds, 0)
+    }
+
+    func setNextAutoRefreshDate(_ date: Date?) {
+        nextAutoRefreshDate = date
+        updateDataRefreshCountdown()
     }
     
     func resetCountdown() {
@@ -97,11 +119,12 @@ final class AppViewModel: ObservableObject {
             }
         }
         
-        let newData = orderedResults.compactMap { $0 }
+        let newData = orderedResults.compactMap { $0 }.map(resolveRefreshTime)
         
         usageData = newData
         ensureManualOrderContainsCurrentAccounts()
         Storage.shared.saveUsageData(newData)
+        Storage.shared.saveCycleLearningState(cycleLearningState)
         updateTokenRefreshCountdown()
         
         WidgetCenter.shared.reloadAllTimelines()
@@ -119,7 +142,7 @@ final class AppViewModel: ObservableObject {
         }
 
         refreshingAccountIDs.insert(accountId)
-        let updatedData = await Self.fetchUsageData(for: account)
+        let updatedData = resolveRefreshTime(await Self.fetchUsageData(for: account))
 
         if let existingIndex = usageData.firstIndex(where: { $0.accountId == accountId }) {
             usageData[existingIndex] = updatedData
@@ -129,6 +152,7 @@ final class AppViewModel: ObservableObject {
         ensureManualOrderContainsCurrentAccounts()
 
         Storage.shared.saveUsageData(usageData)
+        Storage.shared.saveCycleLearningState(cycleLearningState)
         updateTokenRefreshCountdown()
         WidgetCenter.shared.reloadAllTimelines()
         refreshingAccountIDs.remove(accountId)
@@ -270,6 +294,109 @@ final class AppViewModel: ObservableObject {
         Storage.shared.saveDashboardManualOrder(dashboardManualOrder)
     }
 
+    private func resolveRefreshTime(_ data: UsageData) -> UsageData {
+        var resolved = data
+        let now = Date()
+
+        let primaryKey = cycleLearningKey(accountID: data.accountId, kind: "primary")
+        let secondaryKey = cycleLearningKey(accountID: data.accountId, kind: "secondary")
+
+        var primaryState = cycleLearningState[primaryKey] ?? CycleLearningState()
+        var secondaryState = cycleLearningState[secondaryKey] ?? CycleLearningState()
+
+        if let primaryRefresh = resolved.refreshTime {
+            primaryState = updateLearning(primaryState, observedReset: primaryRefresh, now: now)
+            resolved.primaryRefreshIsEstimated = false
+        } else if let predictedPrimary = predictReset(from: primaryState, now: now) {
+            resolved.refreshTime = predictedPrimary
+            resolved.primaryRefreshIsEstimated = true
+            if resolved.nextRefreshTime == nil {
+                resolved.nextRefreshTime = predictedPrimary
+            }
+        } else {
+            resolved.primaryRefreshIsEstimated = false
+        }
+
+        if let secondaryRefresh = resolved.monthlyRefreshTime {
+            secondaryState = updateLearning(secondaryState, observedReset: secondaryRefresh, now: now)
+            resolved.secondaryRefreshIsEstimated = false
+        } else if let predictedSecondary = predictReset(from: secondaryState, now: now) {
+            resolved.monthlyRefreshTime = predictedSecondary
+            resolved.secondaryRefreshIsEstimated = true
+        } else {
+            resolved.secondaryRefreshIsEstimated = false
+        }
+
+        cycleLearningState[primaryKey] = primaryState
+        cycleLearningState[secondaryKey] = secondaryState
+        return resolved
+    }
+
+    private func cycleLearningKey(accountID: UUID, kind: String) -> String {
+        "\(accountID.uuidString)-\(kind)"
+    }
+
+    private func updateLearning(_ state: CycleLearningState, observedReset: Date, now: Date) -> CycleLearningState {
+        var next = state
+        let uniquenessThreshold: TimeInterval = 60
+        if !next.observedResets.contains(where: { abs($0.timeIntervalSince(observedReset)) < uniquenessThreshold }) {
+            next.observedResets.append(observedReset)
+            next.observedResets.sort()
+            if next.observedResets.count > 8 {
+                next.observedResets.removeFirst(next.observedResets.count - 8)
+            }
+        }
+        next.lastObservedAt = now
+
+        let intervals = zip(next.observedResets, next.observedResets.dropFirst())
+            .map { $1.timeIntervalSince($0) }
+            .filter { $0 > 300 }
+            .sorted()
+
+        guard !intervals.isEmpty else { return next }
+
+        let medianInterval = intervals[intervals.count / 2]
+        let plausibleRange = (1800.0...3_888_000.0) // 30m...45d
+        guard plausibleRange.contains(medianInterval) else { return next }
+
+        if let existing = next.learnedInterval, existing > 0 {
+            let drift = abs(medianInterval - existing) / existing
+            if drift <= 0.20 {
+                next.learnedInterval = existing * 0.6 + medianInterval * 0.4
+                next.confidence = min(1.0, max(next.confidence, 0.55) + 0.10)
+            } else {
+                next.confidence = max(0.25, next.confidence - 0.20)
+                if next.confidence < 0.40 {
+                    next.learnedInterval = medianInterval
+                    next.confidence = 0.55
+                }
+            }
+        } else {
+            next.learnedInterval = medianInterval
+            next.confidence = 0.60
+        }
+
+        return next
+    }
+
+    private func predictReset(from state: CycleLearningState, now: Date) -> Date? {
+        guard let interval = state.learnedInterval else { return nil }
+        guard interval > 300 else { return nil }
+        guard state.confidence >= 0.55 else { return nil }
+        guard let lastObservedAt = state.lastObservedAt else { return nil }
+        guard now.timeIntervalSince(lastObservedAt) <= 21 * 86_400 else { return nil }
+        guard let anchor = state.observedResets.last else { return nil }
+
+        var prediction = anchor
+        var guardCounter = 0
+        while prediction <= now, guardCounter < 128 {
+            prediction = prediction.addingTimeInterval(interval)
+            guardCounter += 1
+        }
+        guard prediction > now else { return nil }
+        return prediction
+    }
+
     nonisolated private static func fetchUsageData(for account: APIAccount) async -> UsageData {
         let service = getService(for: account.provider)
 
@@ -290,7 +417,9 @@ final class AppViewModel: ObservableObject {
                 monthlyUsed: result.monthlyUsed,
                 monthlyRefreshTime: result.monthlyRefreshTime,
                 nextRefreshTime: result.nextRefreshTime,
-                subscriptionPlan: result.subscriptionPlan
+                subscriptionPlan: result.subscriptionPlan,
+                primaryCycleIsPercentage: result.primaryCycleIsPercentage,
+                secondaryCycleIsPercentage: result.secondaryCycleIsPercentage
             )
         } catch {
             return UsageData(

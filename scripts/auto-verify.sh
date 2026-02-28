@@ -5,11 +5,11 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PROJECT_FILE="$PROJECT_ROOT/ApiUsageTrackerForMac.xcodeproj"
 SCHEME="ApiUsageTrackerForMac"
-APP_NAME="API Tracker"
+APP_NAME="QuotaPulse"
 CONFIGURATION="${CONFIGURATION:-Debug}"
 DERIVED_DATA_PATH="${DERIVED_DATA_PATH:-$PROJECT_ROOT/DerivedData/AutoVerify}"
-DMG_PATH="${DMG_PATH:-$PROJECT_ROOT/API-Tracker-latest.dmg}"
-MOUNT_POINT="/Volumes/API Tracker Verify"
+DMG_PATH="${DMG_PATH:-$PROJECT_ROOT/QuotaPulse-latest.dmg}"
+MOUNT_POINT="/Volumes/QuotaPulse Verify"
 LAUNCH_TIMEOUT_SECONDS="${LAUNCH_TIMEOUT_SECONDS:-20}"
 HEALTH_CHECK_SECONDS="${HEALTH_CHECK_SECONDS:-8}"
 PRINT_APP_LOG_TAIL="${PRINT_APP_LOG_TAIL:-0}"
@@ -39,7 +39,7 @@ quit_running_app() {
 }
 
 detach_existing_mounts() {
-  hdiutil info | awk '/\/Volumes\/API Tracker/ {print $NF}' | while IFS= read -r mount_path; do
+  hdiutil info | awk '/\/Volumes\/QuotaPulse/ {print $NF}' | while IFS= read -r mount_path; do
     [[ -d "$mount_path" ]] || continue
     hdiutil detach "$mount_path" -force >/dev/null 2>&1 || true
   done
@@ -74,11 +74,10 @@ xcodebuild \
 APP_PATH="$DERIVED_DATA_PATH/Build/Products/$CONFIGURATION/$APP_NAME.app"
 [[ -d "$APP_PATH" ]] || fail "Built app not found under DerivedData ($CONFIGURATION)"
 
-log "Packaging DMG -> $DMG_PATH"
-rm -f "$DMG_PATH"
-hdiutil create -srcfolder "$APP_PATH" -volname "API Tracker" -fs HFS+ -format UDZO "$DMG_PATH" >/tmp/api_tracker_auto_verify_dmg.log 2>&1 || {
+log "Packaging installer DMG -> $DMG_PATH"
+"$PROJECT_ROOT/scripts/create-installer-dmg.sh" "$APP_PATH" "$DMG_PATH" "QuotaPulse" >/tmp/api_tracker_auto_verify_dmg.log 2>&1 || {
   cat /tmp/api_tracker_auto_verify_dmg.log >&2
-  fail "Failed to create DMG"
+  fail "Failed to create installer DMG"
 }
 
 log "Preparing clean runtime state..."

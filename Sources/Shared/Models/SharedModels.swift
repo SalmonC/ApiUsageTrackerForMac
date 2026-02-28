@@ -1,6 +1,13 @@
 import Foundation
 import AppKit
 
+enum AppLanguage: String, Codable, CaseIterable, Identifiable {
+    case chinese = "zh-Hans"
+    case english = "en"
+
+    var id: String { rawValue }
+}
+
 enum APIProvider: String, Codable, CaseIterable, Identifiable {
     case miniMax = "miniMax"
     case glm = "glm"
@@ -54,13 +61,41 @@ enum APIProvider: String, Codable, CaseIterable, Identifiable {
         }
     }
 
-    var remainingQuotaQueryUnsupportedReason: String? {
+    func remainingQuotaQueryUnsupportedReason(language: AppLanguage) -> String? {
         switch self {
         case .glm:
-            return "智谱当前未公开可通过 API Key 直接查询账户余额/Token 余量的稳定接口；现有监控端点会返回成功状态但不包含有效数据。"
+            return language == .english
+                ? "GLM does not currently provide a stable API-key endpoint for direct remaining quota lookup; some endpoints only return status without usable quota fields."
+                : "智谱当前未公开可通过 API Key 直接查询账户余额/Token 余量的稳定接口；现有监控端点会返回成功状态但不包含有效数据。"
         default:
             return nil
         }
+    }
+
+    func capabilityDescription(language: AppLanguage) -> String? {
+        switch self {
+        case .glm:
+            return remainingQuotaQueryUnsupportedReason(language: language)
+        case .chatGPT:
+            return language == .english
+                ? "Supports subscription status and renewal time only; remaining token/quota cannot be queried via accessToken."
+                : "仅支持订阅状态与续期时间查询；无法通过 accessToken 查询可用 Token/额度余量。"
+        case .tavily:
+            return language == .english
+                ? "Remaining quota is available, but official API usually does not provide a stable reset timestamp."
+                : "可查询额度余量；官方接口通常不返回稳定的周期重置时间。"
+        case .kimi:
+            return language == .english
+                ? "Primarily returns cycle percentages; dashboard renders long/short cycle percentages."
+                : "主要返回周期百分比信息；看板将以长/短周期百分比方式展示。"
+        default:
+            return nil
+        }
+    }
+
+    func restrictionHint(language: AppLanguage) -> String? {
+        guard !supportsRemainingQuotaQuery else { return nil }
+        return language == .english ? "Hidden from Add Provider list" : "新增列表中隐藏"
     }
 
     static var selectableForNewAccounts: [APIProvider] {
@@ -69,6 +104,10 @@ enum APIProvider: String, Codable, CaseIterable, Identifiable {
 
     static var unsupportedForRemainingQuotaQuery: [APIProvider] {
         allCases.filter { !$0.supportsRemainingQuotaQuery }
+    }
+
+    static var providersWithCapabilityDescription: [APIProvider] {
+        allCases.filter { $0.capabilityDescription(language: .chinese) != nil }
     }
 }
 
@@ -80,16 +119,16 @@ enum DashboardSortMode: String, Codable, CaseIterable, Identifiable {
     
     var id: String { rawValue }
     
-    var displayName: String {
+    func displayName(language: AppLanguage) -> String {
         switch self {
         case .manual:
-            return "手动排序"
+            return language == .english ? "Manual" : "手动排序"
         case .risk:
-            return "风险优先"
+            return language == .english ? "Risk First" : "风险优先"
         case .provider:
-            return "按平台"
+            return language == .english ? "By Provider" : "按平台"
         case .name:
-            return "按名称"
+            return language == .english ? "By Name" : "按名称"
         }
     }
 }
@@ -112,19 +151,23 @@ struct HotkeySetting: Codable, Equatable {
     
     static let defaultHotkey = HotkeySetting(keyCode: 32, modifiers: UInt32(NSEvent.ModifierFlags.command.rawValue | NSEvent.ModifierFlags.shift.rawValue))
     
-    static func validate(keyCode: UInt16, modifiers: UInt32) -> String? {
+    static func validate(keyCode: UInt16, modifiers: UInt32, language: AppLanguage = .chinese) -> String? {
         let hasCommand = (modifiers & UInt32(NSEvent.ModifierFlags.command.rawValue)) != 0
         let hasShift = (modifiers & UInt32(NSEvent.ModifierFlags.shift.rawValue)) != 0
         let hasOption = (modifiers & UInt32(NSEvent.ModifierFlags.option.rawValue)) != 0
         let hasControl = (modifiers & UInt32(NSEvent.ModifierFlags.control.rawValue)) != 0
         
         if !hasCommand && !hasShift && !hasOption && !hasControl {
-            return "Must include at least one modifier key (⌘⇧⌥⌃)"
+            return language == .english
+                ? "Must include at least one modifier key (⌘⇧⌥⌃)"
+                : "至少需要包含一个修饰键（⌘⇧⌥⌃）"
         }
         
         let invalidKeyCodes: [UInt16] = [48, 49, 51, 53, 36, 76]
         if invalidKeyCodes.contains(keyCode) {
-            return "This key cannot be used as hotkey (Tab, Caps Lock, Delete, Escape, Return, Enter)"
+            return language == .english
+                ? "This key cannot be used as a hotkey (Tab, Caps Lock, Delete, Escape, Return, Enter)"
+                : "该按键不能作为快捷键（Tab、Caps Lock、Delete、Escape、Return、Enter）"
         }
         
         return nil
@@ -174,8 +217,46 @@ struct AppSettings: Codable {
     var accounts: [APIAccount] = []
     var refreshInterval: Int = 5
     var hotkey: HotkeySetting = HotkeySetting(keyCode: 32, modifiers: UInt32(NSEvent.ModifierFlags.command.rawValue | NSEvent.ModifierFlags.shift.rawValue))
+    var language: AppLanguage = .chinese
+
+    init(
+        accounts: [APIAccount] = [],
+        refreshInterval: Int = 5,
+        hotkey: HotkeySetting = HotkeySetting(keyCode: 32, modifiers: UInt32(NSEvent.ModifierFlags.command.rawValue | NSEvent.ModifierFlags.shift.rawValue)),
+        language: AppLanguage = .chinese
+    ) {
+        self.accounts = accounts
+        self.refreshInterval = refreshInterval
+        self.hotkey = hotkey
+        self.language = language
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case accounts
+        case refreshInterval
+        case hotkey
+        case language
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        accounts = try container.decodeIfPresent([APIAccount].self, forKey: .accounts) ?? []
+        refreshInterval = try container.decodeIfPresent(Int.self, forKey: .refreshInterval) ?? 5
+        hotkey = try container.decodeIfPresent(HotkeySetting.self, forKey: .hotkey) ?? HotkeySetting(
+            keyCode: 32,
+            modifiers: UInt32(NSEvent.ModifierFlags.command.rawValue | NSEvent.ModifierFlags.shift.rawValue)
+        )
+        language = try container.decodeIfPresent(AppLanguage.self, forKey: .language) ?? .chinese
+    }
     
     static let `default` = AppSettings()
+}
+
+struct CycleLearningState: Codable, Equatable {
+    var observedResets: [Date] = []
+    var learnedInterval: TimeInterval? = nil
+    var confidence: Double = 0
+    var lastObservedAt: Date? = nil
 }
 
 struct UsageData: Codable, Equatable {
@@ -196,6 +277,10 @@ struct UsageData: Codable, Equatable {
     var monthlyRefreshTime: Date?      // Monthly quota refresh time
     var nextRefreshTime: Date?         // Next refresh time (for limited periods)
     var subscriptionPlan: String? = nil
+    var primaryCycleIsPercentage: Bool? = nil
+    var secondaryCycleIsPercentage: Bool? = nil
+    var primaryRefreshIsEstimated: Bool = false
+    var secondaryRefreshIsEstimated: Bool = false
     
     var displayRemaining: String {
         guard let remaining = tokenRemaining else { return "--" }
@@ -257,12 +342,27 @@ struct UsageData: Codable, Equatable {
     
     var displaySubscriptionPlan: String? {
         guard let subscriptionPlan, !subscriptionPlan.isEmpty else { return nil }
-        switch subscriptionPlan.lowercased() {
+        let normalized = subscriptionPlan
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        switch normalized {
         case "plus":
+            return "Plus"
+        case "chatgptplusplan":
+            return "Plus"
+        case "chatgpt_plus_plan":
             return "Plus"
         case "pro":
             return "Pro"
+        case "chatgptproplan":
+            return "Pro"
+        case "chatgpt_pro_plan":
+            return "Pro"
         case "free":
+            return "Free"
+        case "chatgptfreeplan":
+            return "Free"
+        case "chatgpt_free_plan":
             return "Free"
         case "team":
             return "Team"
@@ -273,7 +373,7 @@ struct UsageData: Codable, Equatable {
         case "active":
             return "Subscribed"
         default:
-            return subscriptionPlan.capitalized
+            return subscriptionPlan
         }
     }
 }
@@ -287,6 +387,7 @@ final class Storage {
     private let refreshIntervalKey = "widgetRefreshInterval"
     private let dashboardSortModeKey = "dashboardSortMode"
     private let dashboardManualOrderKey = "dashboardManualOrder"
+    private let cycleLearningKey = "cycleLearningState"
     
     private var userDefaults: UserDefaults? {
         UserDefaults(suiteName: suiteName)
@@ -306,6 +407,22 @@ final class Storage {
               let data = defaults.data(forKey: usageKey),
               let decoded = try? JSONDecoder().decode([UsageData].self, from: data) else {
             return []
+        }
+        return decoded
+    }
+
+    func saveCycleLearningState(_ state: [String: CycleLearningState]) {
+        guard let defaults = userDefaults else { return }
+        if let encoded = try? JSONEncoder().encode(state) {
+            defaults.set(encoded, forKey: cycleLearningKey)
+        }
+    }
+
+    func loadCycleLearningState() -> [String: CycleLearningState] {
+        guard let defaults = userDefaults,
+              let data = defaults.data(forKey: cycleLearningKey),
+              let decoded = try? JSONDecoder().decode([String: CycleLearningState].self, from: data) else {
+            return [:]
         }
         return decoded
     }

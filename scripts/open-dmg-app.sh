@@ -2,10 +2,10 @@
 
 set -euo pipefail
 
-APP_NAME="API Tracker"
-DEFAULT_DMG="$(cd "$(dirname "$0")/.." && pwd)/API-Tracker-latest.dmg"
+APP_NAME="QuotaPulse"
+DEFAULT_DMG="$(cd "$(dirname "$0")/.." && pwd)/QuotaPulse-latest.dmg"
 DMG_PATH="${1:-$DEFAULT_DMG}"
-MOUNT_POINT="/Volumes/API Tracker Test"
+MOUNT_POINT="/Volumes/QuotaPulse Test"
 
 if [[ ! -f "$DMG_PATH" ]]; then
   echo "DMG not found: $DMG_PATH" >&2
@@ -29,9 +29,9 @@ if pgrep -x "$APP_NAME" >/dev/null 2>&1; then
   exit 1
 fi
 
-# Detach previous API Tracker mounts so the app path stays stable. This helps macOS
+# Detach previous QuotaPulse mounts so the app path stays stable. This helps macOS
 # Keychain remember the app identity when you click "Always Allow".
-hdiutil info | awk '/\/Volumes\/API Tracker/ {print $NF}' | while IFS= read -r mp; do
+hdiutil info | awk '/\/Volumes\/QuotaPulse/ {print $NF}' | while IFS= read -r mp; do
   [[ -d "$mp" ]] || continue
   hdiutil detach "$mp" -force >/dev/null 2>&1 || true
 done

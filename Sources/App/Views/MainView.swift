@@ -17,6 +17,10 @@ struct MainView: View {
     @State private var rowFrames: [UUID: CGRect] = [:]
     @State private var usageListViewportHeight: CGFloat = 0
     @State private var lastAutoScrollAt: Date = .distantPast
+
+    private var language: AppLanguage {
+        viewModel.settings.language
+    }
     
     var body: some View {
         VStack(spacing: 0) {
@@ -91,7 +95,7 @@ struct MainView: View {
         HStack {
             Image(systemName: "chart.bar.fill")
                 .foregroundColor(.blue)
-            Text("API Usage")
+            Text("QuotaPulse")
                 .font(.headline)
             Spacer()
             Button(action: {
@@ -119,7 +123,7 @@ struct MainView: View {
             Spacer()
             ProgressView()
                 .scaleEffect(0.8)
-            Text("Refreshing...")
+            Text(language == .english ? "Refreshing..." : "刷新中...")
                 .font(.caption)
                 .foregroundColor(.secondary)
             Spacer()
@@ -133,20 +137,20 @@ struct MainView: View {
             Image(systemName: "key.slash")
                 .font(.system(size: 32))
                 .foregroundColor(.secondary)
-            Text("No API Accounts Configured")
+            Text(language == .english ? "No API Accounts Configured" : "未配置 API 账号")
                 .font(.subheadline)
                 .foregroundColor(.secondary)
-            Text("Right-click icon → Settings to add accounts")
+            Text(language == .english ? "Right-click icon → Settings to add accounts" : "右键菜单栏图标 → 设置，添加账号")
                 .font(.caption)
                 .foregroundColor(.secondary)
             HStack(spacing: 8) {
-                Button("Open Settings") {
+                Button(language == .english ? "Open Settings" : "打开设置") {
                     viewModel.openSettings()
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
                 
-                Button("Refresh") {
+                Button(language == .english ? "Refresh" : "刷新") {
                     Task { await viewModel.refreshAll() }
                 }
                 .buttonStyle(.bordered)
@@ -158,24 +162,22 @@ struct MainView: View {
     }
 
     private var summaryBar: some View {
-        HStack(spacing: 8) {
-            Label("\(viewModel.usageData.count) accounts", systemImage: "tray.full")
-                .foregroundColor(.secondary)
+        HStack(spacing: 10) {
+            summaryChip(
+                text: language == .english ? "\(viewModel.usageData.count) items" : "\(viewModel.usageData.count)项",
+                icon: "tray.full",
+                color: .secondary
+            )
 
-            if viewModel.failedAccountCount > 0 {
-                Label("\(viewModel.failedAccountCount) failed", systemImage: "exclamationmark.triangle.fill")
-                    .foregroundColor(.orange)
-            } else {
-                Label("All healthy", systemImage: "checkmark.circle.fill")
-                    .foregroundColor(.green)
-            }
+            summaryChip(
+                text: viewModel.failedAccountCount > 0
+                    ? (language == .english ? "\(viewModel.failedAccountCount) issues" : "\(viewModel.failedAccountCount) 异常")
+                    : (language == .english ? "All healthy" : "全部正常"),
+                icon: viewModel.failedAccountCount > 0 ? "exclamationmark.triangle.fill" : "checkmark.circle.fill",
+                color: viewModel.failedAccountCount > 0 ? .orange : .green
+            )
 
             Spacer()
-
-            if viewModel.dashboardSortMode == .manual {
-                Text("拖动手柄调整顺序")
-                    .foregroundColor(.secondary)
-            }
 
             Menu {
                 ForEach(DashboardSortMode.allCases) { mode in
@@ -183,7 +185,7 @@ struct MainView: View {
                         viewModel.setDashboardSortMode(mode)
                     } label: {
                         HStack {
-                            Text(mode.displayName)
+                            Text(mode.displayName(language: language))
                             if mode == viewModel.dashboardSortMode {
                                 Image(systemName: "checkmark")
                             }
@@ -192,8 +194,8 @@ struct MainView: View {
                 }
             } label: {
                 HStack(spacing: 4) {
-                    Image(systemName: "arrow.up.arrow.down.circle")
-                    Text(viewModel.dashboardSortMode.displayName)
+                    Image(systemName: sortModeIconName(viewModel.dashboardSortMode))
+                    Text(viewModel.dashboardSortMode.displayName(language: language))
                 }
             }
             .menuStyle(.borderlessButton)
@@ -201,7 +203,7 @@ struct MainView: View {
         .font(.caption)
         .padding(.horizontal, 12)
         .padding(.top, 8)
-        .padding(.bottom, 4)
+        .padding(.bottom, 6)
         .measureHeight(for: .summary)
     }
     
@@ -212,6 +214,7 @@ struct MainView: View {
                     ForEach(viewModel.displayUsageData, id: \.accountId) { data in
                         UsageRowView(
                             data: data,
+                            language: language,
                             isRefreshing: viewModel.refreshingAccountIDs.contains(data.accountId),
                             canManualReorder: viewModel.dashboardSortMode == .manual,
                             isDragSource: draggedAccountID == data.accountId,
@@ -264,25 +267,19 @@ struct MainView: View {
     private var footerView: some View {
         HStack {
             if let lastUpdate = viewModel.latestUpdateTime {
-                Text("Updated: \(formattedTime(lastUpdate))")
+                Text(language == .english ? "Updated \(formattedTime(lastUpdate))" : "更新于 \(formattedTime(lastUpdate))")
                     .font(.caption2)
                     .foregroundColor(.secondary)
             }
-            if viewModel.secondsUntilTokenRefresh > 0 {
+            if viewModel.secondsUntilDataRefresh > 0 {
                 Text("·")
+                .font(.caption2)
+                .foregroundColor(.secondary)
+                Text(language == .english
+                     ? "Next data refresh \(formattedCountdown(viewModel.secondsUntilDataRefresh))"
+                     : "下次数据刷新 \(formattedCountdown(viewModel.secondsUntilDataRefresh))")
                     .font(.caption2)
                     .foregroundColor(.secondary)
-                Text("Next refresh in \(formattedCountdown(viewModel.secondsUntilTokenRefresh))")
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-            }
-            if !viewModel.usageData.isEmpty {
-                Text("·")
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-                Text(viewModel.failedAccountCount > 0 ? "\(viewModel.failedAccountCount) failed" : "OK")
-                    .font(.caption2)
-                    .foregroundColor(viewModel.failedAccountCount > 0 ? .orange : .green)
             }
             Spacer()
             Button(action: {
@@ -292,11 +289,38 @@ struct MainView: View {
                     .font(.system(size: 12))
             }
             .buttonStyle(.borderless)
-            .help("Settings")
+            .help(language == .english ? "Settings" : "设置")
         }
         .padding(.horizontal)
         .padding(.vertical, 8)
         .measureHeight(for: .footer)
+    }
+
+    private func summaryChip(text: String, icon: String, color: Color) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: icon)
+            Text(text)
+        }
+        .lineLimit(1)
+        .fixedSize(horizontal: true, vertical: false)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(color.opacity(0.12))
+        .foregroundColor(color)
+        .clipShape(Capsule())
+    }
+
+    private func sortModeIconName(_ mode: DashboardSortMode) -> String {
+        switch mode {
+        case .manual:
+            return "line.3.horizontal.circle"
+        case .risk:
+            return "exclamationmark.shield"
+        case .provider:
+            return "square.grid.2x2"
+        case .name:
+            return "textformat.abc"
+        }
     }
     
     private func formattedTime(_ date: Date) -> String {
@@ -312,12 +336,12 @@ struct MainView: View {
         let remainSeconds = seconds % 60
 
         if hours > 0 {
-            return "\(hours)h \(minutes)m"
+            return language == .english ? "\(hours)h \(minutes)m" : "\(hours)小时 \(minutes)分"
         }
         if minutes > 0 {
-            return "\(minutes)m \(remainSeconds)s"
+            return language == .english ? "\(minutes)m \(remainSeconds)s" : "\(minutes)分 \(remainSeconds)秒"
         }
-        return "\(remainSeconds)s"
+        return language == .english ? "\(remainSeconds)s" : "\(remainSeconds)秒"
     }
 
     private func triggerAutoScrollIfNeeded(
@@ -493,6 +517,7 @@ private extension View {
 
 private struct UsageRowView: View {
     let data: UsageData
+    let language: AppLanguage
     var isRefreshing: Bool = false
     var canManualReorder: Bool = false
     var isDragSource: Bool = false
@@ -501,17 +526,23 @@ private struct UsageRowView: View {
     var onDragEnded: (() -> Void)?
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            topRow
+        HStack(alignment: .center, spacing: 10) {
+            VStack(alignment: .leading, spacing: quotaCycles.count > 1 ? 6 : 4) {
+                topRow
 
-            if let error = data.errorMessage {
-                errorRow(error)
-            } else {
-                quotaCycleRows
+                if let error = data.errorMessage {
+                    errorRow(error)
+                } else {
+                    quotaCycleRows
+                }
             }
+
+            Spacer(minLength: 6)
+            trailingStatus
+                .frame(minWidth: 48, alignment: .center)
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 10)
+        .padding(.vertical, quotaCycles.count > 1 ? 8 : 6)
         .background(Color(NSColor.controlBackgroundColor))
         .opacity(isDragSource ? 0.78 : 1.0)
         .scaleEffect(isDragSource ? 0.992 : 1.0)
@@ -539,9 +570,9 @@ private struct UsageRowView: View {
             ZStack {
                 Circle()
                     .fill(providerColor.opacity(0.15))
-                    .frame(width: 28, height: 28)
+                    .frame(width: 30, height: 30)
                 Image(systemName: data.provider.icon)
-                    .font(.system(size: 12))
+                    .font(.system(size: 13))
                     .foregroundColor(providerColor)
             }
 
@@ -551,26 +582,17 @@ private struct UsageRowView: View {
                     .fontWeight(.semibold)
                     .lineLimit(1)
 
-                HStack(spacing: 6) {
-                    Text(data.provider.displayName)
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
-                    if let plan = data.displaySubscriptionPlan, data.provider == .chatGPT {
-                        Text(plan)
+                if shouldShowProviderSubtitle {
+                    HStack(spacing: 6) {
+                        Text(data.provider.displayName)
                             .font(.caption2)
-                            .fontWeight(.semibold)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.green.opacity(0.14))
-                            .foregroundColor(.green)
-                            .cornerRadius(5)
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
                     }
                 }
             }
 
             Spacer(minLength: 6)
-            trailingStatus
         }
     }
 
@@ -582,16 +604,45 @@ private struct UsageRowView: View {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundColor(.orange)
                 .font(.system(size: 14))
+        } else if dualRingCycles.count >= 2 {
+            HStack(spacing: 8) {
+                ForEach(dualRingCycles.prefix(2)) { cycle in
+                    VStack(spacing: 3) {
+                        RemainingRingView(
+                            percentage: cycle.remainingPercentage ?? 0,
+                            tint: ringColor(for: cycle.remainingPercentage ?? 0),
+                            size: 46,
+                            fontSize: 10,
+                            language: language
+                        )
+                        if let label = cycleLabel(for: cycle) {
+                            Text(label)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+            }
+        } else if let remainingPercent = preferredRingCycle?.remainingPercentage {
+            RemainingRingView(
+                percentage: remainingPercent,
+                tint: ringColor(for: remainingPercent),
+                language: language
+            )
+        } else if let plan = data.displaySubscriptionPlan, data.provider == .chatGPT {
+            Text(plan)
+                .font(.caption)
+                .fontWeight(.semibold)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.green.opacity(0.14))
+                .foregroundColor(.green)
+                .cornerRadius(6)
         } else if data.tokenRemaining != nil {
             Text(data.displayRemaining)
                 .font(.system(.headline, design: .rounded))
                 .fontWeight(.semibold)
                 .foregroundColor(remainingColor)
-        } else if let plan = data.displaySubscriptionPlan, data.provider == .chatGPT {
-            Text(plan)
-                .font(.caption)
-                .fontWeight(.semibold)
-                .foregroundColor(.green)
         } else {
             Text("--")
                 .font(.subheadline)
@@ -617,7 +668,7 @@ private struct UsageRowView: View {
                 }
                 .buttonStyle(.borderless)
                 .disabled(isRefreshing)
-                .help("重试")
+                .help(language == .english ? "Retry" : "重试")
             }
         }
     }
@@ -625,11 +676,11 @@ private struct UsageRowView: View {
     @ViewBuilder
     private var quotaCycleRows: some View {
         if quotaCycles.isEmpty {
-            Text("暂无用量统计")
+            Text(language == .english ? "No usage data yet" : "暂无用量统计")
                 .font(.caption)
                 .foregroundColor(.secondary)
         } else {
-            VStack(alignment: .leading, spacing: 5) {
+            VStack(alignment: .leading, spacing: 4) {
                 ForEach(quotaCycles) { cycle in
                     quotaCycleRow(cycle)
                 }
@@ -639,37 +690,59 @@ private struct UsageRowView: View {
 
     private func quotaCycleRow(_ cycle: QuotaCycle) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 6) {
-                Text("\(cycleLabel(for: cycle)): \(cycleUsageText(cycle))")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .lineLimit(1)
+            HStack(alignment: .center, spacing: 6) {
+                if let cycleLabel = cycleLabel(for: cycle) {
+                    Text(cycleLabel)
+                        .font(.caption2)
+                        .fontWeight(.semibold)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(providerColor.opacity(0.14))
+                        .foregroundColor(providerColor)
+                        .cornerRadius(5)
+                }
+
+                let usageText = cycleUsageText(cycle)
+                if !usageText.isEmpty {
+                    Text(usageText)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
 
                 Spacer(minLength: 6)
-
-                if let percentage = cycle.percentage {
-                    Text("\(Int(percentage))%")
+                if !hasRingIndicator, let remainingPercent = cycle.remainingPercentage {
+                    Text(language == .english ? "Left \(formatPercent(remainingPercent))" : "余 \(formatPercent(remainingPercent))")
                         .font(.caption)
                         .fontWeight(.semibold)
-                        .foregroundColor(percentageColor(percentage))
+                        .foregroundColor(ringColor(for: remainingPercent))
                 }
             }
 
-            if let reset = cycle.reset {
+            if let reset = cycle.reset, let countdown = countdownString(for: reset) {
                 HStack(spacing: 4) {
                     Image(systemName: "clock.arrow.circlepath")
                         .font(.caption2)
                         .foregroundColor(.secondary)
-                    Text("重置: \(formattedDate(reset))")
+                    Text(
+                        cycle.isResetEstimated
+                        ? (language == .english ? "Est. \(resetVerb(for: cycle)) in \(countdown)" : "预计 \(countdown) 后\(resetVerb(for: cycle))")
+                        : (language == .english ? "\(resetVerb(for: cycle)) in \(countdown)" : "\(countdown) \(resetVerb(for: cycle))")
+                    )
                         .font(.caption2)
                         .foregroundColor(.secondary)
                         .lineLimit(1)
-                    if let countdown = countdownString(for: reset) {
-                        Text("(\(countdown))")
-                            .font(.caption2)
-                            .foregroundColor(.blue)
-                            .lineLimit(1)
-                    }
+                    Spacer(minLength: 0)
+                }
+            } else if let unavailable = refreshUnavailableText(for: cycle) {
+                HStack(spacing: 4) {
+                    Image(systemName: "clock.badge.xmark")
+                        .font(.caption2)
+                        .foregroundColor(.secondary.opacity(0.75))
+                    Text(unavailable)
+                        .font(.caption2)
+                        .foregroundColor(.secondary.opacity(0.85))
+                        .lineLimit(1)
                     Spacer(minLength: 0)
                 }
             }
@@ -683,7 +756,7 @@ private struct UsageRowView: View {
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundColor(.secondary)
                 .frame(width: 16, height: 16)
-                .help("拖动调整顺序")
+                .help(language == .english ? "Drag to reorder" : "拖动调整顺序")
                 .contentShape(Rectangle())
                 .gesture(
                     DragGesture(minimumDistance: 1, coordinateSpace: .named(usageListCoordinateSpaceName))
@@ -712,6 +785,29 @@ private struct UsageRowView: View {
         }
     }
 
+    private var shouldShowProviderSubtitle: Bool {
+        normalizedLabel(data.accountName) != normalizedLabel(data.provider.displayName)
+    }
+
+    private func normalizedLabel(_ text: String) -> String {
+        text
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
+    }
+
+    private var hasRingIndicator: Bool {
+        preferredRingCycle?.remainingPercentage != nil
+    }
+
+    private var dualRingCycles: [QuotaCycle] {
+        guard quotaCycles.count >= 2 else { return [] }
+        return quotaCycles
+            .filter { $0.remainingPercentage != nil }
+            .sorted { lhs, rhs in
+                ringSortWeight(lhs) < ringSortWeight(rhs)
+            }
+    }
+
     private var remainingColor: Color {
         if data.tokenTotal != nil && data.tokenTotal! > 0 {
             let pct = data.usagePercentage
@@ -733,22 +829,18 @@ private struct UsageRowView: View {
         let seconds = Int(refreshTime.timeIntervalSince(now))
         let hours = seconds / 3600
         let minutes = (seconds % 3600) / 60
+        let remainSeconds = seconds % 60
         
         if hours > 24 {
             let days = hours / 24
-            return "\(days)d \(hours % 24)h"
+            return language == .english ? "\(days)d \(hours % 24)h" : "\(days)天 \(hours % 24)小时"
         } else if hours > 0 {
-            return "\(hours)h \(minutes)m"
+            return language == .english ? "\(hours)h \(minutes)m" : "\(hours)小时 \(minutes)分"
+        } else if minutes > 0 {
+            return language == .english ? "\(minutes)m" : "\(minutes)分"
         } else {
-            return "\(minutes)m"
+            return language == .english ? "\(remainSeconds)s" : "\(remainSeconds)秒"
         }
-    }
-    
-    private func formattedDate(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .short
-        formatter.timeStyle = .short
-        return formatter.string(from: date)
     }
 
     private func formatValue(_ value: Double) -> String {
@@ -758,6 +850,14 @@ private struct UsageRowView: View {
         return String(format: "%.0f", value)
     }
 
+    private func formatPercent(_ value: Double) -> String {
+        let normalized = min(max(value, 0), 100)
+        if normalized >= 10 || abs(normalized.rounded() - normalized) < 0.05 {
+            return "\(Int(normalized.rounded()))%"
+        }
+        return String(format: "%.1f%%", normalized)
+    }
+
     private var quotaCycles: [QuotaCycle] {
         var cycles: [QuotaCycle] = []
         let primary = QuotaCycle(
@@ -765,14 +865,18 @@ private struct UsageRowView: View {
             used: data.tokenUsed,
             total: data.tokenTotal,
             remaining: data.tokenRemaining,
-            reset: data.refreshTime ?? data.nextRefreshTime
+            reset: data.refreshTime ?? data.nextRefreshTime,
+            isPercentageOnly: data.primaryCycleIsPercentage == true,
+            isResetEstimated: data.primaryRefreshIsEstimated
         )
         let secondary = QuotaCycle(
             source: .secondary,
             used: data.monthlyUsed,
             total: data.monthlyTotal,
             remaining: data.monthlyRemaining,
-            reset: data.monthlyRefreshTime
+            reset: data.monthlyRefreshTime,
+            isPercentageOnly: data.secondaryCycleIsPercentage == true,
+            isResetEstimated: data.secondaryRefreshIsEstimated
         )
 
         if primary.hasData {
@@ -782,6 +886,22 @@ private struct UsageRowView: View {
             cycles.append(secondary)
         }
         return cycles
+    }
+
+    private var preferredRingCycle: QuotaCycle? {
+        let candidates = quotaCycles.compactMap { cycle -> (QuotaCycle, Double)? in
+            guard let remaining = cycle.remainingPercentage else { return nil }
+            return (cycle, remaining)
+        }
+        guard !candidates.isEmpty else { return nil }
+
+        let now = Date()
+        return candidates.min { lhs, rhs in
+            if abs(lhs.1 - rhs.1) > 0.01 {
+                return lhs.1 < rhs.1
+            }
+            return resetPriority(lhs.0.reset, now: now) < resetPriority(rhs.0.reset, now: now)
+        }?.0
     }
 
     private func isSameCycle(_ lhs: QuotaCycle, _ rhs: QuotaCycle) -> Bool {
@@ -813,12 +933,21 @@ private struct UsageRowView: View {
         }
     }
 
-    private func cycleLabel(for cycle: QuotaCycle) -> String {
-        guard quotaCycles.count > 1 else { return "周期" }
-        if let shortSource = shortCycleSource {
-            return cycle.source == shortSource ? "短周期" : "长周期"
+    private func cycleLabel(for cycle: QuotaCycle) -> String? {
+        if data.provider == .chatGPT,
+           cycle.used == nil,
+           cycle.total == nil,
+           cycle.remaining == nil {
+            return language == .english ? "Subscription" : "订阅"
         }
-        return cycle.source == .primary ? "周期A" : "周期B"
+
+        guard quotaCycles.count > 1 else { return nil }
+        if let shortSource = shortCycleSource {
+            return cycle.source == shortSource
+                ? (language == .english ? "Short" : "短周期")
+                : (language == .english ? "Long" : "长周期")
+        }
+        return cycle.source == .primary ? (language == .english ? "Cycle A" : "周期A") : (language == .english ? "Cycle B" : "周期B")
     }
 
     private var shortCycleSource: QuotaCycle.Source? {
@@ -833,7 +962,8 @@ private struct UsageRowView: View {
         }?.0
     }
 
-    private func resetPriority(_ date: Date, now: Date) -> TimeInterval {
+    private func resetPriority(_ date: Date?, now: Date) -> TimeInterval {
+        guard let date else { return .greatestFiniteMagnitude }
         let delta = date.timeIntervalSince(now)
         if delta >= 0 {
             return delta
@@ -842,33 +972,82 @@ private struct UsageRowView: View {
     }
 
     private func cycleUsageText(_ cycle: QuotaCycle) -> String {
+        if data.provider == .chatGPT,
+           cycle.used == nil,
+           cycle.total == nil,
+           cycle.remaining == nil {
+            return language == .english ? "Status normal" : "状态正常"
+        }
+
+        if data.provider == .kimi, cycle.isPercentageOnly {
+            return ""
+        }
+
+        if cycle.isPercentageOnly {
+            let usedText = cycle.used.map(formatPercent)
+            let remainingText = cycle.remaining.map(formatPercent)
+
+            if let usedText, let remainingText {
+                return language == .english ? "\(usedText) · left \(remainingText)" : "\(usedText) · 余 \(remainingText)"
+            }
+            if let remainingText {
+                return language == .english ? "left \(remainingText)" : "余 \(remainingText)"
+            }
+            if let usedText {
+                return usedText
+            }
+            return "--"
+        }
+
         let usedText = cycle.used.map(formatValue)
         let totalText = cycle.total.map(formatValue)
         let remainingText = cycle.remaining.map(formatValue)
 
-        if let usedText, let totalText, let remainingText {
-            return "已用 \(usedText)/\(totalText) · 余 \(remainingText)"
-        }
         if let usedText, let totalText {
-            return "已用 \(usedText)/\(totalText)"
+            return language == .english ? "Used \(usedText)/\(totalText)" : "已使用 \(usedText)/\(totalText)"
         }
         if let remainingText {
-            return "剩余 \(remainingText)"
+            return language == .english ? "left \(remainingText)" : "余 \(remainingText)"
         }
         if let usedText {
-            return "已用 \(usedText)"
+            return language == .english ? "Used \(usedText)" : "已使用 \(usedText)"
         }
         if let totalText {
-            return "总额 \(totalText)"
+            return totalText
         }
-        return "暂无额度数据"
+        return "--"
     }
 
-    private func percentageColor(_ value: Double) -> Color {
-        if value > 90 { return .red }
-        if value > 70 { return .orange }
-        if value > 50 { return .yellow }
-        return .blue
+    private func resetVerb(for cycle: QuotaCycle) -> String {
+        if data.provider == .chatGPT,
+           cycle.used == nil,
+           cycle.total == nil,
+           cycle.remaining == nil {
+            return language == .english ? "renews" : "续期"
+        }
+        return language == .english ? "resets" : "重置"
+    }
+
+    private func refreshUnavailableText(for cycle: QuotaCycle) -> String? {
+        guard cycle.reset == nil else { return nil }
+        if data.provider == .tavily {
+            return language == .english ? "Reset time unavailable" : "刷新时间未知"
+        }
+        return nil
+    }
+
+    private func ringSortWeight(_ cycle: QuotaCycle) -> Int {
+        if let shortSource = shortCycleSource {
+            return cycle.source == shortSource ? 1 : 0
+        }
+        return cycle.source == .primary ? 0 : 1
+    }
+
+    private func ringColor(for remaining: Double) -> Color {
+        if remaining <= 20 { return .red }
+        if remaining <= 50 { return .orange }
+        if remaining <= 70 { return .yellow }
+        return .green
     }
 
     private struct QuotaCycle: Identifiable {
@@ -882,6 +1061,8 @@ private struct UsageRowView: View {
         let total: Double?
         let remaining: Double?
         let reset: Date?
+        let isPercentageOnly: Bool
+        let isResetEstimated: Bool
 
         var id: String { source.rawValue }
 
@@ -889,9 +1070,69 @@ private struct UsageRowView: View {
             used != nil || total != nil || remaining != nil || reset != nil
         }
 
-        var percentage: Double? {
-            guard let used, let total, total > 0 else { return nil }
-            return min(max(used / total * 100, 0), 100)
+        var usedPercentage: Double? {
+            if let used, let total, total > 0 {
+                return min(max(used / total * 100, 0), 100)
+            }
+            if isPercentageOnly {
+                if let used {
+                    return min(max(used, 0), 100)
+                }
+                if let remaining {
+                    return min(max(100 - remaining, 0), 100)
+                }
+            }
+            return nil
         }
+
+        var remainingPercentage: Double? {
+            if let remaining, let total, total > 0 {
+                return min(max(remaining / total * 100, 0), 100)
+            }
+            if let used, let total, total > 0 {
+                return min(max(100 - used / total * 100, 0), 100)
+            }
+            if isPercentageOnly {
+                if let remaining {
+                    return min(max(remaining, 0), 100)
+                }
+                if let used {
+                    return min(max(100 - used, 0), 100)
+                }
+            }
+            return nil
+        }
+    }
+}
+
+private struct RemainingRingView: View {
+    let percentage: Double
+    let tint: Color
+    var size: CGFloat = 42
+    var fontSize: CGFloat = 10
+    var language: AppLanguage = .chinese
+
+    var body: some View {
+        let normalized = min(max(percentage, 0), 100)
+
+        ZStack {
+            Circle()
+                .stroke(Color.secondary.opacity(0.18), lineWidth: 3.5)
+
+            Circle()
+                .trim(from: 0, to: normalized / 100)
+                .stroke(
+                    tint,
+                    style: StrokeStyle(lineWidth: 3.5, lineCap: .round, lineJoin: .round)
+                )
+                .rotationEffect(.degrees(-90))
+
+            Text("\(Int(normalized.rounded()))%")
+                .font(.system(size: fontSize, weight: .semibold, design: .rounded))
+                .foregroundColor(.primary)
+        }
+        .frame(width: size, height: size)
+        .help(language == .english ? "Remaining \(Int(normalized.rounded()))%" : "剩余 \(Int(normalized.rounded()))%")
+        .accessibilityLabel(Text(language == .english ? "Remaining \(Int(normalized.rounded()))%" : "剩余 \(Int(normalized.rounded()))%"))
     }
 }

@@ -30,8 +30,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var popover: NSPopover?
     private var settingsWindow: NSWindow?
     private var refreshTimer: Timer?
-    private var globalEventMonitor: Any?
-    private var localEventMonitor: Any?
+    private var hotKeyRef: EventHotKeyRef?
+    private var hotKeyHandlerRef: EventHandlerRef?
+    private let hotKeyIdentifier: UInt32 = 1
+    private let hotKeySignature: OSType = 0x4155544B // "AUTK"
     private var appActivateObserver: NSObjectProtocol?
     private var preferredPopoverContentHeight: CGFloat?
     private var pendingPopoverResizeWorkItem: DispatchWorkItem?
@@ -120,7 +122,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         
         if let button = statusItem?.button {
-            button.image = NSImage(systemSymbolName: "chart.bar.fill", accessibilityDescription: "API Tracker")
+            if let iconURL = Bundle.main.url(forResource: "MenuBarIconWhite", withExtension: "png"),
+               let menuIcon = NSImage(contentsOf: iconURL) {
+                menuIcon.size = NSSize(width: 18, height: 18)
+                button.image = menuIcon
+            } else {
+                button.image = NSImage(systemSymbolName: "circle.hexagongrid", accessibilityDescription: "QuotaPulse")
+            }
+            button.image?.isTemplate = false
+            button.image?.accessibilityDescription = "QuotaPulse"
             button.action = #selector(leftClick)
             button.target = self
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
@@ -128,52 +138,103 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     private func setupGlobalHotKey() {
+        installGlobalHotKeyHandlerIfNeeded()
         updateGlobalHotKey()
     }
     
     private func updateGlobalHotKey() {
-        if let monitor = globalEventMonitor {
-            NSEvent.removeMonitor(monitor)
-            globalEventMonitor = nil
-        }
-        if let monitor = localEventMonitor {
-            NSEvent.removeMonitor(monitor)
-            localEventMonitor = nil
-        }
-        
+        unregisterGlobalHotKey()
+
         let hotkey = viewModel.settings.hotkey
-        let targetKeyCode = hotkey.keyCode
-        let targetModifiers = hotkey.modifiers
-        
-        globalEventMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            if event.keyCode == targetKeyCode && self?.checkModifiers(event.modifierFlags, target: targetModifiers) == true {
-                DispatchQueue.main.async {
-                    self?.showPopover()
-                }
-            }
-        }
-        
-        localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            if event.keyCode == targetKeyCode && self?.checkModifiers(event.modifierFlags, target: targetModifiers) == true {
-                DispatchQueue.main.async {
-                    self?.showPopover()
-                }
-                return nil
-            }
-            return event
+        let eventHotKeyID = EventHotKeyID(signature: hotKeySignature, id: hotKeyIdentifier)
+        let status = RegisterEventHotKey(
+            UInt32(hotkey.keyCode),
+            carbonModifiers(from: hotkey.modifiers),
+            eventHotKeyID,
+            GetApplicationEventTarget(),
+            0,
+            &hotKeyRef
+        )
+
+        if status != noErr {
+            Logger.log("Failed to register global hotkey, status: \(status)")
         }
     }
     
-    private func checkModifiers(_ flags: NSEvent.ModifierFlags, target: UInt32) -> Bool {
-        let hasCommand = (target & UInt32(NSEvent.ModifierFlags.command.rawValue)) != 0
-        let hasShift = (target & UInt32(NSEvent.ModifierFlags.shift.rawValue)) != 0
-        let hasOption = (target & UInt32(NSEvent.ModifierFlags.option.rawValue)) != 0
-        let hasControl = (target & UInt32(NSEvent.ModifierFlags.control.rawValue)) != 0
-        
-        return flags.contains(.command) == hasCommand &&
-               flags.contains(.shift) == hasShift &&
-               flags.contains(.option) == hasOption &&
-               flags.contains(.control) == hasControl
+    private func installGlobalHotKeyHandlerIfNeeded() {
+        guard hotKeyHandlerRef == nil else { return }
+
+        var eventSpec = EventTypeSpec(
+            eventClass: OSType(kEventClassKeyboard),
+            eventKind: UInt32(kEventHotKeyPressed)
+        )
+        let pointer = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
+        let status = InstallEventHandler(
+            GetApplicationEventTarget(),
+            { _, eventRef, userData in
+                guard let userData else { return noErr }
+                let appDelegate = Unmanaged<AppDelegate>.fromOpaque(userData).takeUnretainedValue()
+                return appDelegate.handleGlobalHotKeyEvent(eventRef)
+            },
+            1,
+            &eventSpec,
+            pointer,
+            &hotKeyHandlerRef
+        )
+
+        if status != noErr {
+            Logger.log("Failed to install global hotkey handler, status: \(status)")
+        }
+    }
+
+    private func handleGlobalHotKeyEvent(_ eventRef: EventRef?) -> OSStatus {
+        guard let eventRef else { return noErr }
+
+        var hotKeyID = EventHotKeyID()
+        let status = GetEventParameter(
+            eventRef,
+            EventParamName(kEventParamDirectObject),
+            EventParamType(typeEventHotKeyID),
+            nil,
+            MemoryLayout<EventHotKeyID>.size,
+            nil,
+            &hotKeyID
+        )
+        guard status == noErr else { return status }
+        guard hotKeyID.signature == hotKeySignature, hotKeyID.id == hotKeyIdentifier else {
+            return noErr
+        }
+
+        Task { @MainActor [weak self] in
+            self?.showPopover()
+        }
+        return noErr
+    }
+
+    private func unregisterGlobalHotKey() {
+        if let hotKeyRef {
+            UnregisterEventHotKey(hotKeyRef)
+            self.hotKeyRef = nil
+        }
+    }
+
+    private func carbonModifiers(from modifiers: UInt32) -> UInt32 {
+        var carbonFlags: UInt32 = 0
+
+        if (modifiers & UInt32(NSEvent.ModifierFlags.command.rawValue)) != 0 {
+            carbonFlags |= UInt32(cmdKey)
+        }
+        if (modifiers & UInt32(NSEvent.ModifierFlags.shift.rawValue)) != 0 {
+            carbonFlags |= UInt32(shiftKey)
+        }
+        if (modifiers & UInt32(NSEvent.ModifierFlags.option.rawValue)) != 0 {
+            carbonFlags |= UInt32(optionKey)
+        }
+        if (modifiers & UInt32(NSEvent.ModifierFlags.control.rawValue)) != 0 {
+            carbonFlags |= UInt32(controlKey)
+        }
+
+        return carbonFlags
     }
     
     private func setupAppActivateObserver() {
@@ -468,18 +529,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 await self?.viewModel.refreshAll()
                 self?.updatePopoverSize()  // Update height after data changes
                 self?.checkLowUsageAndNotify()
+                self?.viewModel.setNextAutoRefreshDate(self?.refreshTimer?.fireDate)
             }
         }
+        viewModel.setNextAutoRefreshDate(refreshTimer?.fireDate)
     }
     
     func applicationWillTerminate(_ notification: Notification) {
         pendingPopoverResizeWorkItem?.cancel()
         refreshTimer?.invalidate()
-        if let monitor = globalEventMonitor {
-            NSEvent.removeMonitor(monitor)
-        }
-        if let monitor = localEventMonitor {
-            NSEvent.removeMonitor(monitor)
+        unregisterGlobalHotKey()
+        if let hotKeyHandlerRef {
+            RemoveEventHandler(hotKeyHandlerRef)
+            self.hotKeyHandlerRef = nil
         }
         if let observer = appActivateObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
