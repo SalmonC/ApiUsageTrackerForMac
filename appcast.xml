@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0"
+     xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle"
+     xmlns:dc="http://purl.org/dc/elements/1.1/"
+     xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>QuotaPulse Stable Updates</title>
+    <link>https://github.com/SalmonC/ApiUsageTrackerForMac</link>
+    <atom:link href="https://salmonc.github.io/ApiUsageTrackerForMac/appcast.xml" rel="self" type="application/rss+xml"/>
+    <description>Stable channel appcast for QuotaPulse</description>
+    <language>en</language>
+  </channel>
+</rss>
