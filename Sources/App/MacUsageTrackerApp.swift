@@ -3,6 +3,7 @@ import ServiceManagement
 import Carbon
 import UserNotifications
 import QuartzCore
+import Combine
 
 @main
 struct ApiUsageTrackerForMacApp: App {
@@ -10,22 +11,34 @@ struct ApiUsageTrackerForMacApp: App {
     
     var body: some Scene {
         Settings {
-            SettingsWindow(viewModel: appDelegate.viewModel)
+            SettingsWindow(
+                viewModel: appDelegate.viewModel,
+                updateService: appDelegate.updateService
+            )
         }
     }
 }
 
 struct SettingsWindow: View {
     @ObservedObject var viewModel: AppViewModel
+    @ObservedObject var updateService: UpdateService
     
     var body: some View {
-        SettingsView(viewModel: viewModel)
+        SettingsView(
+            viewModel: viewModel,
+            updateService: updateService
+        )
             .frame(width: 560, height: 560)
     }
 }
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private enum UsageAlertLevel: String {
+        case warning
+        case critical
+    }
+
     private var statusItem: NSStatusItem?
     private var popover: NSPopover?
     private var settingsWindow: NSWindow?
@@ -38,8 +51,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var preferredPopoverContentHeight: CGFloat?
     private var pendingPopoverResizeWorkItem: DispatchWorkItem?
     private var pendingPopoverSize: NSSize?
+    private var usageDataObserver: AnyCancellable?
     private let storage = Storage.shared
+    private var alertNotificationState: [String: Date] = Storage.shared.loadAlertNotificationState()
     var viewModel = AppViewModel()
+    lazy var updateService = UpdateService(
+        languageProvider: { [weak self] in
+            self?.viewModel.settings.language ?? .chinese
+        }
+    )
     
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupPopover()
@@ -49,6 +69,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setupRefreshTimer()
         setupSettingsCallback()
         setupNotifications()
+        setupUsageAlertObserver()
         
         NSApp.setActivationPolicy(.accessory)
         
@@ -64,23 +85,131 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         UNUserNotificationCenter.current().delegate = self
     }
-    
+
+    private func setupUsageAlertObserver() {
+        usageDataObserver = viewModel.$usageData
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.checkLowUsageAndNotify()
+            }
+    }
+
     private func checkLowUsageAndNotify() {
+        let config = viewModel.settings.alertSettings.normalized
+        guard config.isEnabled else { return }
+
+        let cooldown = TimeInterval(config.cooldownMinutes * 60)
+        let now = Date()
+        var shouldPersist = false
+
         for data in viewModel.usageData {
-            guard let total = data.tokenTotal, total > 0 else { continue }
-            let percentage = data.usagePercentage
-            
-            if percentage > 90 {
-                sendNotification(
-                    title: "⚠️ API Usage Alert",
-                    body: "\(data.accountName) has used \(Int(percentage))% of quota"
+            guard data.errorMessage == nil else { continue }
+            guard let usagePercentage = usagePercentageForAlert(data) else {
+                continue
+            }
+
+            let level: UsageAlertLevel?
+            if usagePercentage >= Double(config.criticalPercentage) {
+                level = .critical
+            } else if usagePercentage >= Double(config.warningPercentage) {
+                level = .warning
+            } else {
+                level = nil
+            }
+
+            guard let level else {
+                if clearAlertState(for: data.accountId) {
+                    shouldPersist = true
+                }
+                continue
+            }
+
+            if level == .warning {
+                let criticalKey = alertStateKey(accountId: data.accountId, level: .critical)
+                if let lastCritical = alertNotificationState[criticalKey], now.timeIntervalSince(lastCritical) < cooldown {
+                    continue
+                }
+            }
+
+            let stateKey = alertStateKey(accountId: data.accountId, level: level)
+            if let lastSent = alertNotificationState[stateKey], now.timeIntervalSince(lastSent) < cooldown {
+                continue
+            }
+
+            let content = localizedAlertContent(for: data, usagePercentage: usagePercentage, level: level)
+            sendNotification(title: content.title, body: content.body)
+            alertNotificationState[stateKey] = now
+            shouldPersist = true
+        }
+
+        if shouldPersist {
+            storage.saveAlertNotificationState(alertNotificationState)
+        }
+    }
+
+    private func usagePercentageForAlert(_ data: UsageData) -> Double? {
+        if let total = data.tokenTotal, total > 0 {
+            return data.usagePercentage
+        }
+        if let monthlyTotal = data.monthlyTotal, monthlyTotal > 0 {
+            return data.monthlyUsagePercentage
+        }
+        return nil
+    }
+
+    private func alertStateKey(accountId: UUID, level: UsageAlertLevel) -> String {
+        "\(accountId.uuidString)-\(level.rawValue)"
+    }
+
+    private func clearAlertState(for accountId: UUID) -> Bool {
+        var changed = false
+        for level in [UsageAlertLevel.warning, UsageAlertLevel.critical] {
+            let key = alertStateKey(accountId: accountId, level: level)
+            if alertNotificationState.removeValue(forKey: key) != nil {
+                changed = true
+            }
+        }
+        return changed
+    }
+
+    private func localizedAlertContent(
+        for data: UsageData,
+        usagePercentage: Double,
+        level: UsageAlertLevel
+    ) -> (title: String, body: String) {
+        let language = viewModel.settings.language
+        let rounded = Int(usagePercentage.rounded())
+        let usedText = data.tokenUsed != nil && data.tokenTotal != nil
+            ? "\(data.displayUsed)/\(data.displayTotal)"
+            : "\(rounded)%"
+
+        if language == .english {
+            switch level {
+            case .critical:
+                return (
+                    "QuotaPulse Critical Alert",
+                    "\(data.accountName) usage reached \(rounded)% (\(usedText))."
                 )
-            } else if percentage > 80 {
-                sendNotification(
-                    title: "📊 API Usage Warning",
-                    body: "\(data.accountName) has used \(Int(percentage))% of quota"
+            case .warning:
+                return (
+                    "QuotaPulse Usage Warning",
+                    "\(data.accountName) usage reached \(rounded)% (\(usedText))."
                 )
             }
+        }
+
+        switch level {
+        case .critical:
+            return (
+                "QuotaPulse 用量告警",
+                "\(data.accountName) 用量已达 \(rounded)%（\(usedText)）。"
+            )
+        case .warning:
+            return (
+                "QuotaPulse 用量预警",
+                "\(data.accountName) 用量已达 \(rounded)%（\(usedText)）。"
+            )
         }
     }
     
@@ -109,7 +238,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 await self?.viewModel.refreshAll(reloadSettings: false)
                 self?.updatePopoverSize()  // Update height after settings change
                 self?.updateGlobalHotKey()
-                self?.viewModel.resetCountdown()
                 self?.setupRefreshTimer()
             }
         }
@@ -122,8 +250,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         
         if let button = statusItem?.button {
-            if let iconURL = Bundle.main.url(forResource: "MenuBarIconWhite", withExtension: "png"),
-               let menuIcon = NSImage(contentsOf: iconURL) {
+            let legacyIcon: NSImage?
+            if let iconURL = Bundle.main.url(forResource: "MenuBarIconWhite", withExtension: "png") {
+                legacyIcon = NSImage(contentsOf: iconURL)
+            } else {
+                legacyIcon = nil
+            }
+
+            if let menuIcon = NSImage(named: NSImage.Name("MenuBarIcon")) ?? legacyIcon {
                 menuIcon.size = NSSize(width: 18, height: 18)
                 button.image = menuIcon
             } else {
@@ -270,17 +404,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let popover = popover else { return }
         
         if popover.isShown {
-            popover.performClose(nil)
+            closePopover()
         } else {
             if let button = statusItem?.button {
                 popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
                 popover.contentViewController?.view.window?.makeKey()
                 NSApp.activate(ignoringOtherApps: true)
+                viewModel.setDashboardVisible(true)
             }
         }
     }
     
     private func closePopover() {
+        viewModel.setDashboardVisible(false)
         pendingPopoverResizeWorkItem?.cancel()
         pendingPopoverResizeWorkItem = nil
         pendingPopoverSize = nil
@@ -339,7 +475,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         closePopover()
         
         if settingsWindow == nil {
-            let settingsView = SettingsView(viewModel: viewModel)
+            let settingsView = SettingsView(
+                viewModel: viewModel,
+                updateService: updateService
+            )
             let hostingController = NSHostingController(rootView: settingsView)
             if #available(macOS 13.0, *) {
                 // Disable automatic size propagation to avoid a SwiftUI/AppKit
@@ -424,6 +563,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if popover == nil {
             popover = NSPopover()
             popover?.behavior = .transient
+            popover?.delegate = self
             popover?.contentViewController = NSHostingController(
                 rootView: MainView(
                     viewModel: viewModel,
@@ -528,7 +668,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Task { @MainActor in
                 await self?.viewModel.refreshAll()
                 self?.updatePopoverSize()  // Update height after data changes
-                self?.checkLowUsageAndNotify()
                 self?.viewModel.setNextAutoRefreshDate(self?.refreshTimer?.fireDate)
             }
         }
@@ -538,6 +677,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         pendingPopoverResizeWorkItem?.cancel()
         refreshTimer?.invalidate()
+        usageDataObserver = nil
         unregisterGlobalHotKey()
         if let hotKeyHandlerRef {
             RemoveEventHandler(hotKeyHandlerRef)
@@ -552,5 +692,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 extension AppDelegate: @preconcurrency UNUserNotificationCenterDelegate {
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
         completionHandler([.banner, .sound])
+    }
+}
+
+extension AppDelegate: NSPopoverDelegate {
+    func popoverDidClose(_ notification: Notification) {
+        viewModel.setDashboardVisible(false)
     }
 }

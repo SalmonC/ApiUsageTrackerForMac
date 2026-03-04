@@ -24,6 +24,14 @@
     <string>$(MACOSX_DEPLOYMENT_TARGET)</string>
     <key>LSUIElement</key>
     <true/>
+    <key>SUFeedURL</key>
+    <string>https://salmonc.github.io/ApiUsageTrackerForMac/appcast.xml</string>
+    <key>SUPublicEDKey</key>
+    <string>MDhYHxX1XsxNL8dVMZn6jHIzpvZDsQ+0tFry9LEVLUU=</string>
+    <key>SUEnableAutomaticChecks</key>
+    <true/>
+    <key>SUAutomaticallyUpdate</key>
+    <true/>
     <key>NSUserNotificationAlertStyle</key>
     <string>alert</string>
     <key>NSHumanReadableCopyright</key>

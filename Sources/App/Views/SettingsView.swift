@@ -3,6 +3,7 @@ import AppKit
 
 struct SettingsView: View {
     @ObservedObject var viewModel: AppViewModel
+    @ObservedObject var updateService: UpdateService
     @State private var accounts: [APIAccount] = []
     @State private var autoNamedAccountIDs: Set<UUID> = []
     @State private var expandedStates: [UUID: Bool] = [:]
@@ -16,6 +17,11 @@ struct SettingsView: View {
     @State private var pendingDeleteAccount: APIAccount?
     @State private var isCapabilityNoticeExpanded: Bool = false
     @State private var language: AppLanguage = .chinese
+    @State private var alertsEnabled: Bool = true
+    @State private var warningThreshold: Int = 80
+    @State private var criticalThreshold: Int = 90
+    @State private var alertCooldownMinutes: Int = 120
+    @State private var showTrendInDashboard: Bool = true
     
     enum SaveButtonState {
         case normal
@@ -55,246 +61,480 @@ struct SettingsView: View {
     }
     
     private var generalSettingsView: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            Group {
-                HStack {
-                    Text(language == .english ? "Language" : "语言")
-                        .font(.headline)
-                    Spacer()
-                }
-                Picker("", selection: $language) {
-                    Text(language == .english ? "Chinese" : "中文").tag(AppLanguage.chinese)
-                    Text(language == .english ? "English" : "英文").tag(AppLanguage.english)
-                }
-                .pickerStyle(.segmented)
-
-                Divider()
-
-                HStack {
-                    Text(language == .english ? "Refresh Interval" : "刷新间隔")
-                        .font(.headline)
-                    Spacer()
-                    if hasUnsavedChanges {
-                        Label(language == .english ? "Unsaved Changes" : "未保存更改", systemImage: "circle.fill")
-                            .font(.caption)
-                            .foregroundColor(.orange)
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack(alignment: .center, spacing: 10) {
+                        Text(language == .english ? "General Settings" : "通用设置")
+                            .font(.title3)
+                            .fontWeight(.semibold)
+                        Spacer()
+                        if hasUnsavedChanges {
+                            Label(language == .english ? "Unsaved" : "未保存", systemImage: "circle.fill")
+                                .font(.caption2)
+                                .foregroundColor(.orange)
+                        }
                     }
+
+                    generalCard(
+                        title: language == .english ? "Language & Refresh" : "语言与刷新",
+                        subtitle: language == .english ? "UI language and background refresh cadence" : "界面语言与后台自动刷新频率",
+                        icon: "globe"
+                    ) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text(language == .english ? "Language" : "语言")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            Picker("", selection: $language) {
+                                Text(language == .english ? "Chinese" : "中文").tag(AppLanguage.chinese)
+                                Text(language == .english ? "English" : "英文").tag(AppLanguage.english)
+                            }
+                            .pickerStyle(.segmented)
+
+                            Text(language == .english ? "Refresh interval" : "刷新间隔")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .padding(.top, 2)
+                            Picker("", selection: $refreshInterval) {
+                                Text(language == .english ? "1 minute" : "1 分钟").tag(1)
+                                Text(language == .english ? "5 minutes" : "5 分钟").tag(5)
+                                Text(language == .english ? "15 minutes" : "15 分钟").tag(15)
+                                Text(language == .english ? "30 minutes" : "30 分钟").tag(30)
+                                Text(language == .english ? "1 hour" : "1 小时").tag(60)
+                            }
+                            .pickerStyle(.segmented)
+                        }
+                    }
+
+                    generalCard(
+                        title: language == .english ? "Usage Alerts" : "用量提醒",
+                        subtitle: language == .english ? "Notify when quota usage reaches thresholds" : "在用量达到阈值时发送提醒",
+                        icon: "bell.badge"
+                    ) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Toggle(isOn: $alertsEnabled) {
+                                Text(language == .english ? "Enable low-quota notifications" : "开启低余量通知")
+                            }
+                            .toggleStyle(.switch)
+
+                            if alertsEnabled {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    HStack {
+                                        Text(language == .english ? "Warning threshold" : "预警阈值")
+                                            .font(.caption2)
+                                            .foregroundColor(.secondary)
+                                        Spacer()
+                                        Text("\(warningThreshold)%")
+                                            .font(.caption2)
+                                            .monospacedDigit()
+                                            .foregroundColor(.secondary)
+                                    }
+                                    Picker("", selection: $warningThreshold) {
+                                        Text("70%").tag(70)
+                                        Text("75%").tag(75)
+                                        Text("80%").tag(80)
+                                        Text("85%").tag(85)
+                                        Text("90%").tag(90)
+                                    }
+                                    .pickerStyle(.segmented)
+                                    .onChange(of: warningThreshold) { _, newValue in
+                                        if criticalThreshold <= newValue {
+                                            criticalThreshold = min(100, newValue + 5)
+                                        }
+                                    }
+
+                                    HStack {
+                                        Text(language == .english ? "Critical threshold" : "告警阈值")
+                                            .font(.caption2)
+                                            .foregroundColor(.secondary)
+                                        Spacer()
+                                        Text("\(criticalThreshold)%")
+                                            .font(.caption2)
+                                            .monospacedDigit()
+                                            .foregroundColor(.secondary)
+                                    }
+                                    Picker("", selection: $criticalThreshold) {
+                                        Text("85%").tag(85)
+                                        Text("90%").tag(90)
+                                        Text("95%").tag(95)
+                                        Text("100%").tag(100)
+                                    }
+                                    .pickerStyle(.segmented)
+                                    .onChange(of: criticalThreshold) { _, newValue in
+                                        if newValue <= warningThreshold {
+                                            warningThreshold = max(70, newValue - 5)
+                                        }
+                                    }
+
+                                    HStack {
+                                        Text(language == .english ? "Notification cooldown" : "通知冷却时间")
+                                            .font(.caption2)
+                                            .foregroundColor(.secondary)
+                                        Spacer()
+                                        Text(cooldownLabel(alertCooldownMinutes))
+                                            .font(.caption2)
+                                            .monospacedDigit()
+                                            .foregroundColor(.secondary)
+                                    }
+                                    Picker("", selection: $alertCooldownMinutes) {
+                                        Text(language == .english ? "30m" : "30 分钟").tag(30)
+                                        Text(language == .english ? "1h" : "1 小时").tag(60)
+                                        Text(language == .english ? "2h" : "2 小时").tag(120)
+                                        Text(language == .english ? "4h" : "4 小时").tag(240)
+                                        Text(language == .english ? "8h" : "8 小时").tag(480)
+                                        Text(language == .english ? "24h" : "24 小时").tag(1440)
+                                    }
+                                    .pickerStyle(.segmented)
+                                }
+                                .padding(10)
+                                .background(Color.gray.opacity(0.08))
+                                .cornerRadius(10)
+                            }
+                        }
+                    }
+
+                    generalCard(
+                        title: language == .english ? "Dashboard" : "看板显示",
+                        subtitle: language == .english ? "Choose whether trend charts are shown in cards" : "控制卡片中趋势图的显示",
+                        icon: "chart.line.uptrend.xyaxis"
+                    ) {
+                        Toggle(isOn: $showTrendInDashboard) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(language == .english ? "Show usage trends in dashboard" : "在看板显示用量趋势")
+                                Text(
+                                    language == .english
+                                    ? "Turn off to simplify cards and reduce chart rendering."
+                                    : "关闭后可简化卡片内容并减少图表渲染。"
+                                )
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                            }
+                        }
+                        .toggleStyle(.switch)
+                    }
+
+                    generalCard(
+                        title: language == .english ? "Hotkey" : "快捷键",
+                        subtitle: language == .english ? "Global shortcut to open the dashboard quickly" : "用于快速打开看板的全局快捷键",
+                        icon: "keyboard"
+                    ) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(language == .english
+                                 ? "Click below and press a key combo (include at least one modifier: ⌘⇧⌥⌃)"
+                                 : "点击下方并录入组合键（至少包含一个修饰键：⌘⇧⌥⌃）")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+
+                            HStack(spacing: 8) {
+                                Button(action: {
+                                    hotkeyError = nil
+                                    hotkeyBeforeRecording = hotkey
+                                    isRecordingHotkey = true
+                                }) {
+                                    HStack {
+                                        if isRecordingHotkey {
+                                            Text(language == .english ? "Press keys..." : "请按下组合键...")
+                                                .foregroundColor(.red)
+                                        } else {
+                                            Text(hotkey.displayString)
+                                                .fontWeight(.medium)
+                                        }
+                                    }
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 8)
+                                    .background(Color.gray.opacity(0.1))
+                                    .cornerRadius(8)
+                                }
+                                .buttonStyle(.plain)
+                                .background(
+                                    HotkeyRecorderView(
+                                        isRecording: $isRecordingHotkey,
+                                        hotkey: $hotkey,
+                                        language: language,
+                                        onValidationError: { error in
+                                            hotkeyError = error
+                                            hotkeyBeforeRecording = nil
+                                        },
+                                        onRecordingCancelled: {
+                                            cancelHotkeyRecording()
+                                        },
+                                        onRecordingCompleted: {
+                                            hotkeyBeforeRecording = nil
+                                        }
+                                    )
+                                )
+
+                                Button(action: {
+                                    hotkey = HotkeySetting.defaultHotkey
+                                    hotkeyError = nil
+                                }) {
+                                    Text(language == .english ? "Default" : "默认")
+                                        .font(.caption)
+                                }
+                                .buttonStyle(.bordered)
+
+                                if isRecordingHotkey {
+                                    Button(language == .english ? "Cancel" : "取消") {
+                                        cancelHotkeyRecording()
+                                    }
+                                    .buttonStyle(.bordered)
+                                }
+                            }
+
+                            if let error = hotkeyError {
+                                Label(error, systemImage: "exclamationmark.triangle.fill")
+                                    .font(.caption)
+                                    .foregroundColor(.orange)
+                            }
+
+                            Text(language == .english ? "Current: \(hotkey.displayString)" : "当前快捷键：\(hotkey.displayString)")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+
+                    generalCard(
+                        title: language == .english ? "Updates & Project" : "更新与项目",
+                        subtitle: language == .english ? "Check stable releases and open project docs" : "检查正式版更新并打开项目文档",
+                        icon: "arrow.triangle.2.circlepath"
+                    ) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            let buttonHeight: CGFloat = 32
+                            HStack(spacing: 8) {
+                                Button(action: {
+                                    updateService.checkForUpdates()
+                                }) {
+                                    HStack(spacing: 6) {
+                                        ZStack {
+                                            Image(systemName: "arrow.clockwise")
+                                                .font(.system(size: 12, weight: .semibold))
+                                                .opacity(updateService.isChecking ? 0 : 1)
+                                            ProgressView()
+                                                .controlSize(.small)
+                                                .opacity(updateService.isChecking ? 1 : 0)
+                                        }
+                                        .frame(width: 14, height: 14)
+                                        Text(language == .english ? "Check for Updates" : "检查更新")
+                                    }
+                                    .frame(maxWidth: .infinity, minHeight: buttonHeight, maxHeight: buttonHeight)
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .controlSize(.regular)
+                                .disabled(updateService.isChecking)
+                                .animation(.none, value: updateService.isChecking)
+
+                                Button(action: {
+                                    updateService.openGitHubReadme()
+                                }) {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "book")
+                                        Text(language == .english ? "GitHub README" : "GitHub 文档")
+                                    }
+                                    .frame(maxWidth: .infinity, minHeight: buttonHeight, maxHeight: buttonHeight)
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.regular)
+                            }
+
+                            Text(language == .english
+                                 ? "Mode: manual download updates (unsigned build)"
+                                 : "更新模式：手动下载更新（未签名构建）")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+
+                            Text(language == .english
+                                 ? "Current app version: \(currentAppVersion)"
+                                 : "当前应用版本：\(currentAppVersion)")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+
+                            if let statusMessage = updateService.statusMessage {
+                                Text(statusMessage)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            if let lastCheckTime = updateService.lastCheckTime {
+                                Text(
+                                    language == .english
+                                    ? "Last checked: \(formattedUpdateCheckTime(lastCheckTime))"
+                                    : "上次检查：\(formattedUpdateCheckTime(lastCheckTime))"
+                                )
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+
                 }
-                Picker("", selection: $refreshInterval) {
-                    Text(language == .english ? "1 minute" : "1 分钟").tag(1)
-                    Text(language == .english ? "5 minutes" : "5 分钟").tag(5)
-                    Text(language == .english ? "15 minutes" : "15 分钟").tag(15)
-                    Text(language == .english ? "30 minutes" : "30 分钟").tag(30)
-                    Text(language == .english ? "1 hour" : "1 小时").tag(60)
-                }
-                .pickerStyle(.segmented)
+                .padding(16)
+                .padding(.bottom, 8)
             }
-            
-            Divider()
-            
-            Group {
-                Text(language == .english ? "Hotkey" : "快捷键")
-                    .font(.headline)
-                Text(language == .english
-                     ? "Press below and input a key combo (must include at least one modifier: ⌘⇧⌥⌃)"
-                     : "点击下方按钮并录入按键组合（至少包含一个修饰键：⌘⇧⌥⌃）")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                
-                HStack {
-                    Button(action: {
-                        hotkeyError = nil
-                        hotkeyBeforeRecording = hotkey
-                        isRecordingHotkey = true
-                    }) {
-                        HStack {
-                            if isRecordingHotkey {
-                                Text(language == .english ? "Press keys..." : "请按下组合键...")
-                                    .foregroundColor(.red)
-                            } else {
-                                Text(hotkey.displayString)
-                            }
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
-                        .background(Color.gray.opacity(0.1))
-                        .cornerRadius(6)
-                    }
-                    .buttonStyle(.plain)
-                    .background(
-                        HotkeyRecorderView(
-                            isRecording: $isRecordingHotkey,
-                            hotkey: $hotkey,
-                            language: language,
-                            onValidationError: { error in
-                                hotkeyError = error
-                                hotkeyBeforeRecording = nil
-                            },
-                            onRecordingCancelled: {
-                                cancelHotkeyRecording()
-                            },
-                            onRecordingCompleted: {
-                                hotkeyBeforeRecording = nil
-                            }
-                        )
-                    )
-                    
-                    Button(action: {
-                        hotkey = HotkeySetting.defaultHotkey
-                        hotkeyError = nil
-                    }) {
-                        Text(language == .english ? "Restore Default" : "恢复默认")
-                            .font(.caption)
-                    }
-                    .buttonStyle(.bordered)
 
-                    if isRecordingHotkey {
-                        Button(language == .english ? "Cancel" : "取消") {
-                            cancelHotkeyRecording()
-                        }
-                        .buttonStyle(.bordered)
-                    }
+            stickySaveBar(primary: true)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private func generalCard<Content: View>(
+        title: String,
+        subtitle: String,
+        icon: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 8) {
+                ZStack {
+                    Circle()
+                        .fill(Color.accentColor.opacity(0.14))
+                        .frame(width: 26, height: 26)
+                    Image(systemName: icon)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(.accentColor)
                 }
-                
-                if let error = hotkeyError {
-                    HStack {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundColor(.orange)
-                        Text(error)
-                            .foregroundColor(.orange)
-                    }
-                    .font(.caption)
-                }
-                
-                Text(language == .english ? "Current hotkey: \(hotkey.displayString)" : "当前快捷键：\(hotkey.displayString)")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                if isRecordingHotkey {
-                    Text(language == .english
-                         ? "Click elsewhere, press Esc, or use Cancel to stop recording"
-                         : "点击其他位置、按 Esc 或使用取消按钮停止录入")
-                        .font(.caption2)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.headline)
+                    Text(subtitle)
+                        .font(.caption)
                         .foregroundColor(.secondary)
                 }
+                Spacer(minLength: 0)
             }
-            
-            Button(action: {
-                saveSettings()
-                collapseAllAccounts()
-            }) {
-                HStack {
-                    if saveButtonState == .saved {
-                        Image(systemName: "checkmark")
-                    }
-                    Text(saveButtonTitle(primary: true))
-                }
-                .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .tint(saveButtonTintColor)
-            .disabled(!hasUnsavedChanges && saveButtonState != .saved)
+
+            content()
         }
-        .padding()
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(NSColor.controlBackgroundColor))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+        )
     }
     
     private var accountsSettingsView: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .center) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(language == .english ? "API Accounts" : "API 账号")
-                        .font(.headline)
-                    Text(language == .english ? "Added accounts will appear on dashboard" : "添加账号后可在看板中显示实时状态")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
+        VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .center, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(language == .english ? "API Accounts" : "API 账号")
+                            .font(.title3)
+                            .fontWeight(.semibold)
+                        Text(language == .english ? "Added accounts will appear on dashboard" : "添加账号后可在看板中显示实时状态")
+                            .font(.footnote)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    if hasUnsavedChanges {
+                        Text(language == .english ? "Unsaved" : "未保存")
+                            .font(.caption2)
+                            .fontWeight(.semibold)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color.orange.opacity(0.16))
+                            .foregroundColor(.orange)
+                            .clipShape(Capsule())
+                    }
+                    Button(action: addAccount) {
+                        Label(language == .english ? "Add" : "新增", systemImage: "plus")
+                            .labelStyle(.iconOnly)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
                 }
-                Spacer()
-                if hasUnsavedChanges {
-                    Text(language == .english ? "Unsaved" : "未保存")
-                        .font(.caption)
-                        .foregroundColor(.orange)
+                if accounts.isEmpty {
+                    VStack {
+                        Text(language == .english ? "No API accounts configured" : "当前没有配置 API 账号")
+                            .foregroundColor(.secondary)
+                        Text(language == .english ? "Click + to add an account" : "点击 + 新增账号")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                    if !APIProvider.providersWithCapabilityDescription.isEmpty {
+                        providerCapabilityNoticeSection
+                    }
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: 12) {
+                            ForEach($accounts) { $account in
+                                AccountRowView(
+                                    account: $account,
+                                    isExpanded: Binding(
+                                        get: { expandedStates[account.id] ?? false },
+                                        set: { expandedStates[account.id] = $0 }
+                                    ),
+                                    onDelete: {
+                                        pendingDeleteAccount = account
+                                    },
+                                    onNameEditFinished: { originalName, editedName in
+                                        let trimmed = editedName.trimmingCharacters(in: .whitespacesAndNewlines)
+                                        if trimmed.isEmpty {
+                                            account.name = account.provider.displayName
+                                            autoNamedAccountIDs.insert(account.id)
+                                        } else if editedName != originalName {
+                                            autoNamedAccountIDs.remove(account.id)
+                                        }
+                                    },
+                                    onProviderChanged: { _, newProvider in
+                                        let shouldFollowProvider = autoNamedAccountIDs.contains(account.id)
+                                        if shouldFollowProvider {
+                                            account.name = newProvider.displayName
+                                            autoNamedAccountIDs.insert(account.id)
+                                        }
+                                    },
+                                    language: language
+                                )
+                            }
+
+                            if !APIProvider.providersWithCapabilityDescription.isEmpty {
+                                providerCapabilityNoticeSection
+                                    .padding(.top, 2)
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .top)
                 }
-                Button(action: addAccount) {
-                    Label(language == .english ? "Add" : "新增", systemImage: "plus.circle.fill")
-                        .labelStyle(.iconOnly)
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+
+            stickySaveBar(primary: false)
+        }
+    }
+
+    private func stickySaveBar(primary: Bool) -> some View {
+        VStack(spacing: 0) {
+            Divider()
+            HStack {
+                Button(action: {
+                    saveSettings()
+                    collapseAllAccounts()
+                }) {
+                    HStack {
+                        if saveButtonState == .saved {
+                            Image(systemName: "checkmark.circle.fill")
+                        } else {
+                            Image(systemName: "square.and.arrow.down")
+                        }
+                        Text(saveButtonTitle(primary: primary))
+                    }
+                    .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
-                .controlSize(.regular)
+                .controlSize(.large)
+                .tint(saveButtonTintColor)
+                .keyboardShortcut("s", modifiers: .command)
+                .disabled(!hasUnsavedChanges && saveButtonState != .saved)
             }
-            if accounts.isEmpty {
-                VStack {
-                    Text(language == .english ? "No API accounts configured" : "当前没有配置 API 账号")
-                        .foregroundColor(.secondary)
-                    Text(language == .english ? "Click + to add an account" : "点击 + 新增账号")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-                if !APIProvider.providersWithCapabilityDescription.isEmpty {
-                    providerCapabilityNoticeSection
-                }
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: 10) {
-                        ForEach($accounts) { $account in
-                            AccountRowView(
-                                account: $account,
-                                isExpanded: Binding(
-                                    get: { expandedStates[account.id] ?? false },
-                                    set: { expandedStates[account.id] = $0 }
-                                ),
-                                onDelete: {
-                                    pendingDeleteAccount = account
-                                },
-                                onNameEditFinished: { originalName, editedName in
-                                    let trimmed = editedName.trimmingCharacters(in: .whitespacesAndNewlines)
-                                    if trimmed.isEmpty {
-                                        account.name = account.provider.displayName
-                                        autoNamedAccountIDs.insert(account.id)
-                                    } else if editedName != originalName {
-                                        autoNamedAccountIDs.remove(account.id)
-                                    }
-                                },
-                                onProviderChanged: { oldProvider, newProvider in
-                                    let shouldFollowProvider = autoNamedAccountIDs.contains(account.id)
-                                    if shouldFollowProvider {
-                                        account.name = newProvider.displayName
-                                        autoNamedAccountIDs.insert(account.id)
-                                    }
-                                },
-                                language: language
-                            )
-                        }
-
-                        if !APIProvider.providersWithCapabilityDescription.isEmpty {
-                            providerCapabilityNoticeSection
-                                .padding(.top, 2)
-                        }
-                    }
-                }
-                .frame(maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .top)
-            }
-            
-            Button(action: {
-                saveSettings()
-                collapseAllAccounts()
-            }) {
-                HStack {
-                    if saveButtonState == .saved {
-                        Image(systemName: "checkmark")
-                    }
-                    Text(saveButtonTitle(primary: false))
-                }
-                .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .tint(saveButtonTintColor)
-            .disabled(!hasUnsavedChanges && saveButtonState != .saved)
+            .padding(.horizontal, 16)
+            .padding(.top, 10)
+            .padding(.bottom, 12)
+            .background(Color(NSColor.windowBackgroundColor))
         }
-        .padding()
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private var providerCapabilityNoticeSection: some View {
@@ -398,6 +638,11 @@ struct SettingsView: View {
         refreshInterval = settings.refreshInterval
         hotkey = settings.hotkey
         language = settings.language
+        alertsEnabled = settings.alertSettings.isEnabled
+        warningThreshold = settings.alertSettings.warningPercentage
+        criticalThreshold = settings.alertSettings.criticalPercentage
+        alertCooldownMinutes = settings.alertSettings.cooldownMinutes
+        showTrendInDashboard = settings.showTrendInDashboard
         isRecordingHotkey = false
         hotkeyBeforeRecording = nil
         hotkeyError = nil
@@ -412,7 +657,9 @@ struct SettingsView: View {
             accounts: accounts,
             refreshInterval: refreshInterval,
             hotkey: hotkey,
-            language: language
+            language: language,
+            alertSettings: normalizedAlertSettings(),
+            showTrendInDashboard: showTrendInDashboard
         )
         viewModel.saveSettings(settings)
         savedDraftSignature = currentDraftSignature()
@@ -500,11 +747,47 @@ struct SettingsView: View {
     }
 
     private func currentDraftSignature() -> String {
-        let draft = AppSettings(accounts: accounts, refreshInterval: refreshInterval, hotkey: hotkey, language: language)
+        let draft = AppSettings(
+            accounts: accounts,
+            refreshInterval: refreshInterval,
+            hotkey: hotkey,
+            language: language,
+            alertSettings: normalizedAlertSettings(),
+            showTrendInDashboard: showTrendInDashboard
+        )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         guard let data = try? encoder.encode(draft) else { return "" }
         return String(decoding: data, as: UTF8.self)
+    }
+
+    private func normalizedAlertSettings() -> ThresholdAlertSettings {
+        ThresholdAlertSettings(
+            isEnabled: alertsEnabled,
+            warningPercentage: warningThreshold,
+            criticalPercentage: criticalThreshold,
+            cooldownMinutes: alertCooldownMinutes
+        ).normalized
+    }
+
+    private func cooldownLabel(_ minutes: Int) -> String {
+        if minutes % 60 == 0 {
+            let hour = minutes / 60
+            return language == .english ? "\(hour)h" : "\(hour)小时"
+        }
+        return language == .english ? "\(minutes)m" : "\(minutes)分钟"
+    }
+
+    private func formattedUpdateCheckTime(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = language == .english ? Locale(identifier: "en_US_POSIX") : Locale(identifier: "zh_CN")
+        formatter.dateStyle = .short
+        formatter.timeStyle = .short
+        return formatter.string(from: date)
+    }
+
+    private var currentAppVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"
     }
 
 }
@@ -522,13 +805,13 @@ struct AccountRowView: View {
     @State private var nameAtEditStart: String = ""
     
     var body: some View {
-        VStack(alignment: .leading, spacing: isExpanded ? 12 : 0) {
-            HStack {
+        VStack(alignment: .leading, spacing: isExpanded ? 14 : 0) {
+            HStack(alignment: .center, spacing: 8) {
                 Button(action: toggleExpanded) {
                     Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(.secondary)
-                        .frame(width: 24, height: 24)
+                        .frame(width: 20, height: 20)
                 }
                 .buttonStyle(.plain)
 
@@ -536,23 +819,28 @@ struct AccountRowView: View {
                     nameEditorOrLabel
                 } else {
                     Button(action: toggleExpanded) {
-                        Text(account.name.isEmpty ? account.provider.displayName : account.name)
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-                            .lineLimit(1)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(account.name.isEmpty ? account.provider.displayName : account.name)
+                                .font(.system(size: 15, weight: .semibold))
+                                .lineLimit(1)
+                            Text(account.provider.displayName)
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                        }
                     }
                     .buttonStyle(.plain)
                 }
                 
                 Spacer()
                 
-                HStack(spacing: 8) {
+                HStack(spacing: 6) {
                     Text(language == .english ? "Show" : "显示")
-                        .font(.subheadline)
+                        .font(.caption)
                         .foregroundColor(.secondary)
                     Toggle("", isOn: $account.isEnabled)
                         .toggleStyle(.switch)
-                        .controlSize(.small)
+                        .controlSize(.mini)
                         .labelsHidden()
                 }
                 
@@ -561,22 +849,36 @@ struct AccountRowView: View {
                         .foregroundColor(.red)
                 }
                 .buttonStyle(.plain)
+                .frame(width: 20, height: 20)
+                .background(Color.red.opacity(0.08))
+                .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
             }
             
             if isExpanded {
                 VStack(alignment: .leading, spacing: 12) {
-                    Picker(language == .english ? "Provider" : "供应商", selection: $account.provider) {
-                        ForEach(providerOptions) { provider in
-                            Text(providerOptionLabel(provider)).tag(provider)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(language == .english ? "Provider" : "供应商")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        Picker(language == .english ? "Provider" : "供应商", selection: $account.provider) {
+                            ForEach(providerOptions) { provider in
+                                Text(providerOptionLabel(provider)).tag(provider)
+                            }
+                        }
+                        .labelsHidden()
+                        .onChange(of: account.provider) { oldValue, newValue in
+                            endNameEditing()
+                            onProviderChanged?(oldValue, newValue)
                         }
                     }
-                    .onChange(of: account.provider) { oldValue, newValue in
-                        endNameEditing()
-                        onProviderChanged?(oldValue, newValue)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(apiKeyPlaceholder)
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        SecureField(apiKeyPlaceholder, text: $account.apiKey)
+                            .textFieldStyle(.roundedBorder)
                     }
-                    
-                    SecureField(apiKeyPlaceholder, text: $account.apiKey)
-                        .textFieldStyle(.roundedBorder)
                     
                     if account.provider == .chatGPT {
                         VStack(alignment: .leading, spacing: 6) {
@@ -597,21 +899,23 @@ struct AccountRowView: View {
                         }
                     }
                     
-                    TestConnectionButton(account: account, language: language)
+                    Divider()
+                    TestConnectionButton(account: $account, language: language)
                 }
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, isExpanded ? 12 : 10)
+        .padding(.vertical, isExpanded ? 12 : 9)
         .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(Color.gray.opacity(0.05))
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color(NSColor.windowBackgroundColor))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(Color.gray.opacity(0.10), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(isExpanded ? Color.accentColor.opacity(0.30) : Color.gray.opacity(0.12), lineWidth: 1)
         )
+        .shadow(color: .black.opacity(0.03), radius: 2, x: 0, y: 1)
         .onChange(of: isNameFieldFocused) { _, focused in
             if !focused && isEditingName {
                 endNameEditing()
@@ -629,7 +933,7 @@ struct AccountRowView: View {
                 }
             ))
             .textFieldStyle(.roundedBorder)
-            .frame(width: 170)
+            .frame(width: 200)
             .focused($isNameFieldFocused)
             .onAppear {
                 DispatchQueue.main.async {
@@ -643,8 +947,7 @@ struct AccountRowView: View {
             Button(action: beginNameEditing) {
                 HStack(spacing: 4) {
                     Text(account.name.isEmpty ? account.provider.displayName : account.name)
-                        .font(.subheadline)
-                        .fontWeight(.medium)
+                        .font(.system(size: 15, weight: .semibold))
                         .lineLimit(1)
                     Image(systemName: "pencil")
                         .font(.caption2)
@@ -787,45 +1090,77 @@ class KeyRecorderNSView: NSView {
 }
 
 struct TestConnectionButton: View {
-    let account: APIAccount
+    @Binding var account: APIAccount
     var language: AppLanguage = .chinese
     @State private var isTesting = false
     @State private var testResult: TestResult?
+    @State private var showDetails = false
     
     enum TestResult {
-        case success(String)
-        case failure(String)
+        case success(summary: String, details: String?)
+        case failure(summary: String, details: String?)
     }
     
     var body: some View {
-        HStack {
-            Button(action: testConnection) {
-                HStack(spacing: 4) {
-                    if isTesting {
-                        ProgressView()
-                            .scaleEffect(0.6)
-                            .frame(width: 16, height: 16)
-                    } else if let result = testResult {
-                        Image(systemName: iconForResult(result))
-                            .foregroundColor(colorForResult(result))
-                    } else {
-                        Image(systemName: "network")
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Button(action: testConnection) {
+                    HStack(spacing: 6) {
+                        if isTesting {
+                            ProgressView()
+                                .scaleEffect(0.65)
+                                .frame(width: 14, height: 14)
+                        } else {
+                            Image(systemName: "network")
+                                .font(.caption)
+                        }
+                        Text(buttonText)
+                            .font(.caption)
                     }
-                    Text(buttonText)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(isTesting)
+
+                if let result = testResult {
+                    Label(messageForResult(result), systemImage: iconForResult(result))
                         .font(.caption)
+                        .foregroundColor(colorForResult(result))
+                        .lineLimit(1)
                 }
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .disabled(isTesting || account.apiKey.isEmpty)
-            
-            if let result = testResult {
-                Text(messageForResult(result))
-                    .font(.caption)
-                    .foregroundColor(colorForResult(result))
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
+
+            if let result = testResult,
+               let details = detailsForResult(result),
+               !details.isEmpty {
+                Button(showDetails ? (language == .english ? "Hide details" : "收起详情") : (language == .english ? "Show details" : "展开详情")) {
+                    withAnimation(.easeInOut(duration: 0.16)) {
+                        showDetails.toggle()
+                    }
+                }
+                .buttonStyle(.plain)
+                .font(.caption2)
+                .foregroundColor(.secondary)
+
+                if showDetails {
+                    Text(details)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.secondary.opacity(0.08))
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                }
             }
+        }
+        .onChange(of: account.apiKey) { _, _ in
+            testResult = nil
+            showDetails = false
+        }
+        .onChange(of: account.provider) { _, _ in
+            testResult = nil
+            showDetails = false
         }
     }
     
@@ -839,31 +1174,59 @@ struct TestConnectionButton: View {
     }
     
     private func testConnection() {
-        guard !account.apiKey.isEmpty else { return }
+        // Force commit editing so SecureField value is synchronized before test.
+        NSApp.keyWindow?.makeFirstResponder(nil)
+
+        let credential = account.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !credential.isEmpty else {
+            testResult = .failure(
+                summary: language == .english ? "Please enter credential first" : "请先输入凭证",
+                details: nil
+            )
+            return
+        }
         
         isTesting = true
         testResult = nil
+        showDetails = false
         
         Task {
             let service = getService(for: account.provider)
             do {
-                let result = try await service.fetchUsage(apiKey: account.apiKey)
+                let result = try await service.fetchUsage(apiKey: credential)
                 await MainActor.run {
                     if result.remaining != nil ||
                         result.used != nil ||
                         result.total != nil ||
                         result.monthlyRemaining != nil ||
                         result.monthlyUsed != nil ||
-                        result.monthlyTotal != nil {
-                        testResult = .success(language == .english ? "Connection successful!" : "连接成功")
+                        result.monthlyTotal != nil ||
+                        result.subscriptionPlan != nil ||
+                        result.refreshTime != nil ||
+                        result.monthlyRefreshTime != nil ||
+                        result.nextRefreshTime != nil {
+                        testResult = .success(
+                            summary: language == .english ? "Connection successful" : "连接成功",
+                            details: language == .english
+                            ? "Provider: \(account.provider.displayName)"
+                            : "供应商：\(account.provider.displayName)"
+                        )
                     } else {
-                        testResult = .failure(language == .english ? "Invalid response from API" : "API 返回数据无效")
+                        testResult = .failure(
+                            summary: language == .english ? "Connected but no usable fields" : "连接成功但无可用字段",
+                            details: language == .english
+                            ? "Provider endpoint returned success without known usage/subscription fields."
+                            : "接口返回成功，但没有识别到可用的用量/订阅字段。"
+                        )
                     }
                     isTesting = false
                 }
             } catch {
                 await MainActor.run {
-                    testResult = .failure(error.localizedDescription)
+                    testResult = .failure(
+                        summary: language == .english ? "Connection failed" : "连接失败",
+                        details: classifiedFailureDetail(error)
+                    )
                     isTesting = false
                 }
             }
@@ -890,10 +1253,126 @@ struct TestConnectionButton: View {
     
     private func messageForResult(_ result: TestResult) -> String {
         switch result {
-        case .success(let msg):
+        case .success(let msg, _):
             return msg
-        case .failure(let msg):
+        case .failure(let msg, _):
             return msg
         }
+    }
+
+    private func detailsForResult(_ result: TestResult) -> String? {
+        switch result {
+        case .success(_, let details):
+            return details
+        case .failure(_, let details):
+            return details
+        }
+    }
+
+    private func classifiedFailureDetail(_ error: Error) -> String {
+        if let apiError = error as? APIError {
+            switch apiError {
+            case .noAPIKey:
+                return language == .english
+                    ? "Type: Missing credential\nPlease input API key/token and retry."
+                    : "类型：缺少凭证\n请先输入 API Key/Token 后重试。"
+            case .httpError(let code), .httpErrorWithMessage(let code, _):
+                if code == 401 || code == 403 {
+                    return language == .english
+                        ? "Type: Authentication failed (HTTP \(code))\nCredential is invalid, expired, or has insufficient permissions."
+                        : "类型：鉴权失败（HTTP \(code)）\n凭证无效、已过期或权限不足。"
+                }
+                if code == 429 {
+                    return language == .english
+                        ? "Type: Rate limited (HTTP 429)\nPlease retry later."
+                        : "类型：触发频率限制（HTTP 429）\n请稍后重试。"
+                }
+                if code >= 500 {
+                    return language == .english
+                        ? "Type: Provider service error (HTTP \(code))\nThis is usually temporary."
+                        : "类型：供应商服务异常（HTTP \(code)）\n通常为临时问题。"
+                }
+                return language == .english
+                    ? "Type: API request failed (HTTP \(code))\n\(error.localizedDescription)"
+                    : "类型：接口请求失败（HTTP \(code)）\n\(error.localizedDescription)"
+            case .decodingError:
+                return language == .english
+                    ? "Type: Response parse failure\nProvider response schema may have changed."
+                    : "类型：响应解析失败\n可能是供应商返回结构发生变化。"
+            case .networkError(let wrapped):
+                return classifyWrappedError(wrapped)
+            case .invalidURL, .invalidResponse:
+                return language == .english
+                    ? "Type: Invalid response\nProvider endpoint returned unexpected payload."
+                    : "类型：响应无效\n供应商接口返回了异常数据。"
+            }
+        }
+
+        let lowered = error.localizedDescription.lowercased()
+        if lowered.contains("401") || lowered.contains("403") || lowered.contains("unauthorized") || lowered.contains("forbidden") {
+            return language == .english
+                ? "Type: Authentication failed\nCredential is invalid, expired, or unauthorized."
+                : "类型：鉴权失败\n凭证无效、过期或权限不足。"
+        }
+        if lowered.contains("429") || lowered.contains("rate") {
+            return language == .english
+                ? "Type: Rate limited\nPlease retry later."
+                : "类型：触发频率限制\n请稍后重试。"
+        }
+        if lowered.contains("decode") || lowered.contains("json") || lowered.contains("parse") {
+            return language == .english
+                ? "Type: Response parse failure\nProvider response schema may have changed."
+                : "类型：响应解析失败\n可能是供应商返回结构发生变化。"
+        }
+        if lowered.contains("timed out") || lowered.contains("timeout") {
+            return language == .english
+                ? "Type: Request timeout\nNetwork is slow or provider endpoint is overloaded."
+                : "类型：请求超时\n可能是网络较慢或供应商接口拥塞。"
+        }
+        return language == .english
+            ? "Type: Unknown failure\n\(error.localizedDescription)"
+            : "类型：未知错误\n\(error.localizedDescription)"
+    }
+
+    private func classifyWrappedError(_ wrapped: Error) -> String {
+        if let urlError = wrapped as? URLError {
+            switch urlError.code {
+            case .notConnectedToInternet:
+                return language == .english
+                    ? "Type: Network unavailable\nPlease check internet connection."
+                    : "类型：网络不可用\n请检查网络连接。"
+            case .timedOut:
+                return language == .english
+                    ? "Type: Request timeout\nProvider did not respond in time."
+                    : "类型：请求超时\n供应商接口响应超时。"
+            case .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed:
+                return language == .english
+                    ? "Type: Endpoint unreachable\nPlease check network/proxy/DNS."
+                    : "类型：接口不可达\n请检查网络、代理或 DNS。"
+            default:
+                return language == .english
+                    ? "Type: Network error\n\(wrapped.localizedDescription)"
+                    : "类型：网络错误\n\(wrapped.localizedDescription)"
+            }
+        }
+
+        let nsError = wrapped as NSError
+        if nsError.domain == NSURLErrorDomain {
+            return language == .english
+                ? "Type: Network error\n\(wrapped.localizedDescription)"
+                : "类型：网络错误\n\(wrapped.localizedDescription)"
+        }
+
+        // Many providers wrap auth/schema/business failures into a custom NSError
+        // (domain != NSURLErrorDomain), so classify them as provider/API failures.
+        let lowered = wrapped.localizedDescription.lowercased()
+        if lowered.contains("auth") || lowered.contains("token") || lowered.contains("key") || lowered.contains("permission") {
+            return language == .english
+                ? "Type: Authentication/permission failure\n\(wrapped.localizedDescription)"
+                : "类型：鉴权或权限失败\n\(wrapped.localizedDescription)"
+        }
+        return language == .english
+            ? "Type: Provider/API failure\n\(wrapped.localizedDescription)"
+            : "类型：供应商接口失败\n\(wrapped.localizedDescription)"
     }
 }

@@ -213,22 +213,45 @@ struct HotkeySetting: Codable, Equatable {
     }
 }
 
+struct ThresholdAlertSettings: Codable, Equatable {
+    var isEnabled: Bool = true
+    var warningPercentage: Int = 80
+    var criticalPercentage: Int = 90
+    var cooldownMinutes: Int = 120
+
+    static let `default` = ThresholdAlertSettings()
+
+    var normalized: ThresholdAlertSettings {
+        var next = self
+        next.warningPercentage = min(max(next.warningPercentage, 1), 99)
+        next.criticalPercentage = min(max(next.criticalPercentage, next.warningPercentage + 1), 100)
+        next.cooldownMinutes = min(max(next.cooldownMinutes, 5), 1_440)
+        return next
+    }
+}
+
 struct AppSettings: Codable {
     var accounts: [APIAccount] = []
     var refreshInterval: Int = 5
     var hotkey: HotkeySetting = HotkeySetting(keyCode: 32, modifiers: UInt32(NSEvent.ModifierFlags.command.rawValue | NSEvent.ModifierFlags.shift.rawValue))
     var language: AppLanguage = .chinese
+    var alertSettings: ThresholdAlertSettings = .default
+    var showTrendInDashboard: Bool = true
 
     init(
         accounts: [APIAccount] = [],
         refreshInterval: Int = 5,
         hotkey: HotkeySetting = HotkeySetting(keyCode: 32, modifiers: UInt32(NSEvent.ModifierFlags.command.rawValue | NSEvent.ModifierFlags.shift.rawValue)),
-        language: AppLanguage = .chinese
+        language: AppLanguage = .chinese,
+        alertSettings: ThresholdAlertSettings = .default,
+        showTrendInDashboard: Bool = true
     ) {
         self.accounts = accounts
         self.refreshInterval = refreshInterval
         self.hotkey = hotkey
         self.language = language
+        self.alertSettings = alertSettings.normalized
+        self.showTrendInDashboard = showTrendInDashboard
     }
 
     enum CodingKeys: String, CodingKey {
@@ -236,6 +259,8 @@ struct AppSettings: Codable {
         case refreshInterval
         case hotkey
         case language
+        case alertSettings
+        case showTrendInDashboard
     }
 
     init(from decoder: Decoder) throws {
@@ -247,6 +272,8 @@ struct AppSettings: Codable {
             modifiers: UInt32(NSEvent.ModifierFlags.command.rawValue | NSEvent.ModifierFlags.shift.rawValue)
         )
         language = try container.decodeIfPresent(AppLanguage.self, forKey: .language) ?? .chinese
+        alertSettings = (try container.decodeIfPresent(ThresholdAlertSettings.self, forKey: .alertSettings) ?? .default).normalized
+        showTrendInDashboard = try container.decodeIfPresent(Bool.self, forKey: .showTrendInDashboard) ?? true
     }
     
     static let `default` = AppSettings()
@@ -378,16 +405,31 @@ struct UsageData: Codable, Equatable {
     }
 }
 
+struct UsageSnapshot: Codable, Equatable, Identifiable {
+    var id: UUID = UUID()
+    var accountId: UUID
+    var provider: APIProvider
+    var capturedAt: Date
+    var tokenUsed: Double?
+    var tokenTotal: Double?
+    var monthlyUsed: Double?
+    var monthlyTotal: Double?
+    var usagePercentage: Double?
+    var monthlyUsagePercentage: Double?
+}
+
 final class Storage {
     static let shared = Storage()
     
     private let suiteName = "group.com.mactools.apiusagetracker"
     private let usageKey = "usageData"
+    private let usageSnapshotsKey = "usageSnapshots"
     private let settingsKey = "appSettings"
     private let refreshIntervalKey = "widgetRefreshInterval"
     private let dashboardSortModeKey = "dashboardSortMode"
     private let dashboardManualOrderKey = "dashboardManualOrder"
     private let cycleLearningKey = "cycleLearningState"
+    private let alertNotificationStateKey = "alertNotificationState"
     
     private var userDefaults: UserDefaults? {
         UserDefaults(suiteName: suiteName)
@@ -409,6 +451,22 @@ final class Storage {
             return []
         }
         return decoded
+    }
+
+    func saveUsageSnapshots(_ snapshots: [UsageSnapshot]) {
+        guard let defaults = userDefaults else { return }
+        if let encoded = try? JSONEncoder().encode(snapshots) {
+            defaults.set(encoded, forKey: usageSnapshotsKey)
+        }
+    }
+
+    func loadUsageSnapshots() -> [UsageSnapshot] {
+        guard let defaults = userDefaults,
+              let data = defaults.data(forKey: usageSnapshotsKey),
+              let decoded = try? JSONDecoder().decode([UsageSnapshot].self, from: data) else {
+            return []
+        }
+        return decoded.sorted { $0.capturedAt < $1.capturedAt }
     }
 
     func saveCycleLearningState(_ state: [String: CycleLearningState]) {
@@ -528,5 +586,21 @@ final class Storage {
             return []
         }
         return rawIDs.compactMap(UUID.init(uuidString:))
+    }
+
+    func saveAlertNotificationState(_ state: [String: Date]) {
+        guard let defaults = userDefaults else { return }
+        if let encoded = try? JSONEncoder().encode(state) {
+            defaults.set(encoded, forKey: alertNotificationStateKey)
+        }
+    }
+
+    func loadAlertNotificationState() -> [String: Date] {
+        guard let defaults = userDefaults,
+              let data = defaults.data(forKey: alertNotificationStateKey),
+              let decoded = try? JSONDecoder().decode([String: Date].self, from: data) else {
+            return [:]
+        }
+        return decoded
     }
 }

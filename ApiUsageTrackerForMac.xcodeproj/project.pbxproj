@@ -9,19 +9,35 @@
 /* Begin PBXBuildFile section */
 		00F9B57E8B54F79C613BE58D /* KeychainManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 602F70D65A9C980203F6BD98 /* KeychainManager.swift */; };
 		13F488C052886E1CECA919C8 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 14F415E3ABAE6B0B1C239C1B /* Assets.xcassets */; };
+		226BA8872B4FD19FF834B1FA /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 2E8282225F9008D9991A690F /* Sparkle */; };
 		28C826CE0E50865749DF28C2 /* SharedModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9414C803D917A736D233CFB1 /* SharedModels.swift */; };
 		324E88666A3E6F6DD291E2FC /* MenuBarIconWhite.png in Resources */ = {isa = PBXBuildFile; fileRef = 9B96BB309DBA1B3C9BA1AD5B /* MenuBarIconWhite.png */; };
+		353C599F6108B47A2C0D6B41 /* AppViewModelTrendCacheTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F13CE13402C160304895C912 /* AppViewModelTrendCacheTests.swift */; };
 		484A216DA5B16129B197429F /* MiniMaxService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FF6B9FE16DDE191C927E55A /* MiniMaxService.swift */; };
 		53150102108CF99497BA4546 /* MiniMaxService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FF6B9FE16DDE191C927E55A /* MiniMaxService.swift */; };
 		5E84302E7AA53CFE13223001 /* SharedModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9414C803D917A736D233CFB1 /* SharedModels.swift */; };
 		8E0EC68197844D01FD823D84 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C9CD75A9EE1CA102F828EAF /* SettingsView.swift */; };
 		8F4170DA7AC40592349FAD58 /* UsageWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB8F3E644DAA9E6A7DAE3671 /* UsageWidget.swift */; };
+		AA7C6A147294294B570DCC55 /* UsageMetricsLogicTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C460EA0444BF0C2B9656323D /* UsageMetricsLogicTests.swift */; };
 		ABFE3EF76BFB7A52C5311058 /* AppViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD1285205F09B204EBEAE018 /* AppViewModel.swift */; };
 		B57F915ED5C7D636FF216929 /* KeychainManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 602F70D65A9C980203F6BD98 /* KeychainManager.swift */; };
 		BAFDF737F3AA15CB4135459F /* MainView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5778A959BCC4A1A91986E98 /* MainView.swift */; };
 		BD0C01256AD90323EA278935 /* MacUsageTrackerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8892B5835F6801D9232A56D4 /* MacUsageTrackerApp.swift */; };
+		C155C92883D10BFF2E0B2832 /* UpdateService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 970286AFB63BF1D74B394556 /* UpdateService.swift */; };
+		C963FBE0C3CCF6E83069F97D /* UsageMetricsLogic.swift in Sources */ = {isa = PBXBuildFile; fileRef = D15B8BEB8D28C099C0F1FB12 /* UsageMetricsLogic.swift */; };
+		E0F81E5D29E851DCC65AB842 /* UpdateServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6211BC542870A74D68E8BB96 /* UpdateServiceTests.swift */; };
 		EE65348837B367E0CB3484D6 /* AppIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = 8933A121A2B9D2EC0B16DD21 /* AppIcon.icns */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		B608146405660C4C4423649F /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = F5916F8A0256863539836978 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 34833AA8C3D6D914A37C1768;
+			remoteInfo = ApiUsageTrackerForMac;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		0409C5BC1366F82E5D7C1C86 /* ApiUsageTrackerForMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ApiUsageTrackerForMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -31,17 +47,34 @@
 		2D75B1353ABF84B252D9C928 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		4C9CD75A9EE1CA102F828EAF /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		602F70D65A9C980203F6BD98 /* KeychainManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainManager.swift; sourceTree = "<group>"; };
+		6211BC542870A74D68E8BB96 /* UpdateServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateServiceTests.swift; sourceTree = "<group>"; };
+		7BE95869E66771C1F8B0936E /* QuotaPulseTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = QuotaPulseTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		8892B5835F6801D9232A56D4 /* MacUsageTrackerApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacUsageTrackerApp.swift; sourceTree = "<group>"; };
 		8933A121A2B9D2EC0B16DD21 /* AppIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = AppIcon.icns; sourceTree = "<group>"; };
 		9414C803D917A736D233CFB1 /* SharedModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedModels.swift; sourceTree = "<group>"; };
 		968868EBA04CD1558EB228E7 /* UsageWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = UsageWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		970286AFB63BF1D74B394556 /* UpdateService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateService.swift; sourceTree = "<group>"; };
 		9B96BB309DBA1B3C9BA1AD5B /* MenuBarIconWhite.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = MenuBarIconWhite.png; sourceTree = "<group>"; };
 		AB8F3E644DAA9E6A7DAE3671 /* UsageWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageWidget.swift; sourceTree = "<group>"; };
+		C460EA0444BF0C2B9656323D /* UsageMetricsLogicTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageMetricsLogicTests.swift; sourceTree = "<group>"; };
 		CD1285205F09B204EBEAE018 /* AppViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppViewModel.swift; sourceTree = "<group>"; };
+		D15B8BEB8D28C099C0F1FB12 /* UsageMetricsLogic.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageMetricsLogic.swift; sourceTree = "<group>"; };
 		D5778A959BCC4A1A91986E98 /* MainView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainView.swift; sourceTree = "<group>"; };
 		E38E7BA76C378B83321F9903 /* ApiUsageTrackerForMac.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ApiUsageTrackerForMac.entitlements; sourceTree = "<group>"; };
+		F13CE13402C160304895C912 /* AppViewModelTrendCacheTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppViewModelTrendCacheTests.swift; sourceTree = "<group>"; };
 		F6E7B49F6EFDBFE6E3C7A42D /* UsageWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = UsageWidget.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		805D23CECC7A43739E211417 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				226BA8872B4FD19FF834B1FA /* Sparkle in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
 		0A3D74A998D02565FDF264C6 /* App */ = {
@@ -49,6 +82,7 @@
 			children = (
 				8892B5835F6801D9232A56D4 /* MacUsageTrackerApp.swift */,
 				CB69A4731C8DB7323CF137A7 /* Resources */,
+				A6463FFA4DA8540D4F1A406B /* Services */,
 				0D17A4149145FB5FBD4F6A13 /* ViewModels */,
 				5B9E81D8AA4A9EDFDE2DFE57 /* Views */,
 			);
@@ -60,6 +94,7 @@
 			isa = PBXGroup;
 			children = (
 				CD1285205F09B204EBEAE018 /* AppViewModel.swift */,
+				D15B8BEB8D28C099C0F1FB12 /* UsageMetricsLogic.swift */,
 			);
 			path = ViewModels;
 			sourceTree = "<group>";
@@ -69,6 +104,7 @@
 			children = (
 				0A3D74A998D02565FDF264C6 /* App */,
 				3FE62FDB61BEDC9F6FF3B7AA /* Shared */,
+				5154AEF4D045B25E19B8139A /* Tests */,
 				49AB45925B7E009F6FCAB862 /* Widget */,
 				31D74C796630BECF5033E22B /* Products */,
 			);
@@ -78,6 +114,7 @@
 			isa = PBXGroup;
 			children = (
 				0409C5BC1366F82E5D7C1C86 /* ApiUsageTrackerForMac.app */,
+				7BE95869E66771C1F8B0936E /* QuotaPulseTests.xctest */,
 				968868EBA04CD1558EB228E7 /* UsageWidget.appex */,
 			);
 			name = Products;
@@ -113,6 +150,16 @@
 			path = Security;
 			sourceTree = "<group>";
 		};
+		5154AEF4D045B25E19B8139A /* Tests */ = {
+			isa = PBXGroup;
+			children = (
+				F13CE13402C160304895C912 /* AppViewModelTrendCacheTests.swift */,
+				6211BC542870A74D68E8BB96 /* UpdateServiceTests.swift */,
+				C460EA0444BF0C2B9656323D /* UsageMetricsLogicTests.swift */,
+			);
+			path = Tests;
+			sourceTree = "<group>";
+		};
 		51642C9F83E5F0A190F1FB11 /* Services */ = {
 			isa = PBXGroup;
 			children = (
@@ -136,6 +183,14 @@
 				9414C803D917A736D233CFB1 /* SharedModels.swift */,
 			);
 			path = Models;
+			sourceTree = "<group>";
+		};
+		A6463FFA4DA8540D4F1A406B /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				970286AFB63BF1D74B394556 /* UpdateService.swift */,
+			);
+			path = Services;
 			sourceTree = "<group>";
 		};
 		CB69A4731C8DB7323CF137A7 /* Resources */ = {
@@ -176,6 +231,7 @@
 			buildPhases = (
 				7A08538BBE44D5148CC8CA97 /* Sources */,
 				6A7E3DF47A631CF49B05E2DA /* Resources */,
+				805D23CECC7A43739E211417 /* Frameworks */,
 			);
 			buildRules = (
 			);
@@ -183,10 +239,29 @@
 			);
 			name = ApiUsageTrackerForMac;
 			packageProductDependencies = (
+				2E8282225F9008D9991A690F /* Sparkle */,
 			);
 			productName = ApiUsageTrackerForMac;
 			productReference = 0409C5BC1366F82E5D7C1C86 /* ApiUsageTrackerForMac.app */;
 			productType = "com.apple.product-type.application";
+		};
+		E8EDA08FB35EC063249A5BAA /* QuotaPulseTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 0E847D00E2ADAC45F7A9BB02 /* Build configuration list for PBXNativeTarget "QuotaPulseTests" */;
+			buildPhases = (
+				B30B4E11DF308875913C2156 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				3E5B4C3F5EB526C3444C8D5F /* PBXTargetDependency */,
+			);
+			name = QuotaPulseTests;
+			packageProductDependencies = (
+			);
+			productName = QuotaPulseTests;
+			productReference = 7BE95869E66771C1F8B0936E /* QuotaPulseTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
 		};
 /* End PBXNativeTarget section */
 
@@ -207,11 +282,15 @@
 			);
 			mainGroup = 2BCA64DED5335F51D18AB8C3;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				96BD310F60D3ED1C966C313E /* XCRemoteSwiftPackageReference "Sparkle" */,
+			);
 			preferredProjectObjectVersion = 77;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
 				34833AA8C3D6D914A37C1768 /* ApiUsageTrackerForMac */,
+				E8EDA08FB35EC063249A5BAA /* QuotaPulseTests */,
 				04C859F8B778F67EBB79DD5B /* UsageWidget */,
 			);
 		};
@@ -253,10 +332,30 @@
 				484A216DA5B16129B197429F /* MiniMaxService.swift in Sources */,
 				8E0EC68197844D01FD823D84 /* SettingsView.swift in Sources */,
 				5E84302E7AA53CFE13223001 /* SharedModels.swift in Sources */,
+				C155C92883D10BFF2E0B2832 /* UpdateService.swift in Sources */,
+				C963FBE0C3CCF6E83069F97D /* UsageMetricsLogic.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B30B4E11DF308875913C2156 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				353C599F6108B47A2C0D6B41 /* AppViewModelTrendCacheTests.swift in Sources */,
+				E0F81E5D29E851DCC65AB842 /* UpdateServiceTests.swift in Sources */,
+				AA7C6A147294294B570DCC55 /* UsageMetricsLogicTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		3E5B4C3F5EB526C3444C8D5F /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 34833AA8C3D6D914A37C1768 /* ApiUsageTrackerForMac */;
+			targetProxy = B608146405660C4C4423649F /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		06C76896782459076249519C /* Release */ = {
@@ -293,7 +392,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 20;
+				CURRENT_PROJECT_VERSION = 21;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_HARDENED_RUNTIME = NO;
 				ENABLE_NS_ASSERTIONS = NO;
@@ -307,7 +406,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.9.3;
+				MARKETING_VERSION = 1.0.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -371,6 +470,25 @@
 			};
 			name = Debug;
 		};
+		6432E93F292ADFA633DC33DF /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.mactools.apiusagetracker.tests;
+				PRODUCT_NAME = QuotaPulseTests;
+				SDKROOT = macosx;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/QuotaPulse.app/Contents/MacOS/QuotaPulse";
+			};
+			name = Debug;
+		};
 		97D6E71A3E27BE70CE328404 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -385,6 +503,27 @@
 				SKIP_INSTALL = YES;
 			};
 			name = Debug;
+		};
+		AEE84357153851E7B39E8CFA /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.mactools.apiusagetracker.tests;
+				PRODUCT_NAME = QuotaPulseTests;
+				SDKROOT = macosx;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/QuotaPulse.app/Contents/MacOS/QuotaPulse";
+			};
+			name = Release;
 		};
 		C1C803D77BC0136F7DF21C41 /* Debug */ = {
 			isa = XCBuildConfiguration;
@@ -420,7 +559,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 20;
+				CURRENT_PROJECT_VERSION = 21;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_HARDENED_RUNTIME = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -440,7 +579,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.9.3;
+				MARKETING_VERSION = 1.0.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -455,6 +594,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		0E847D00E2ADAC45F7A9BB02 /* Build configuration list for PBXNativeTarget "QuotaPulseTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6432E93F292ADFA633DC33DF /* Debug */,
+				AEE84357153851E7B39E8CFA /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 		49A246750341F52A5AECECC7 /* Build configuration list for PBXNativeTarget "UsageWidget" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -483,6 +631,25 @@
 			defaultConfigurationName = Debug;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		96BD310F60D3ED1C966C313E /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.9.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		2E8282225F9008D9991A690F /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 96BD310F60D3ED1C966C313E /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = F5916F8A0256863539836978 /* Project object */;
 }

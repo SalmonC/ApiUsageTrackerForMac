@@ -29,6 +29,7 @@ A macOS menu bar application for tracking API usage quotas from various AI provi
 - **Global Hotkey** - Show/hide window with customizable keyboard shortcut
 - **Test Connection** - Verify API keys before saving
 - **Low Usage Alerts** - System notifications when usage exceeds 80% or 90%
+- **In-app Update Check** - Sparkle-based stable update check in Settings > General
 
 #### Security
 - **Keychain Storage** - API keys are securely stored in macOS Keychain
@@ -76,6 +77,9 @@ xcodebuild -project ApiUsageTrackerForMac.xcodeproj -scheme ApiUsageTrackerForMa
 APP_PATH=~/Library/Developer/Xcode/DerivedData/ApiUsageTrackerForMac-*/Build/Products/Release/API\ Tracker.app
 hdiutil create -srcfolder "$APP_PATH" -volname "ApiUsageTrackerForMac" -fs HFS+ -format UDZO ApiUsageTrackerForMac.dmg
 ```
+
+For Sparkle release/appcast workflow, see:
+`scripts/release/README.md`
 
 ### Automated Verification (No Manual Install)
 
@@ -149,6 +153,7 @@ Optional environment variables:
 - **全局快捷键** - 可自定义的快捷键显示/隐藏窗口
 - **连接测试** - 保存前验证 API Key 是否有效
 - **用量提醒** - 用量超过 80% 或 90% 时发送系统通知
+- **应用内检查更新** - 在设置 > 通用中使用 Sparkle 检查正式版更新
 
 #### 安全性
 - **钥匙串存储** - API Key 安全存储在 macOS 钥匙串中
@@ -196,6 +201,9 @@ xcodebuild -project ApiUsageTrackerForMac.xcodeproj -scheme ApiUsageTrackerForMa
 APP_PATH=~/Library/Developer/Xcode/DerivedData/ApiUsageTrackerForMac-*/Build/Products/Release/API\ Tracker.app
 hdiutil create -srcfolder "$APP_PATH" -volname "ApiUsageTrackerForMac" -fs HFS+ -format UDZO ApiUsageTrackerForMac.dmg
 ```
+
+Sparkle 发布 / appcast 流程见：
+`scripts/release/README.md`
 
 ### 自动验证（无需手动安装）
 
@@ -258,6 +266,12 @@ hdiutil create -srcfolder "$APP_PATH" -volname "ApiUsageTrackerForMac" -fs HFS+ 
 ---
 
 ## Changelog / 更新日志
+
+### v1.0.0 (2026-03-04)
+- **Release / 发布**: First stable release of QuotaPulse / QuotaPulse 首个稳定正式版
+- **Update / 更新**: Settings adds GitHub stable release check and README quick access / 设置页新增 GitHub 正式版检查与 README 快速入口
+- **Distribution / 分发**: Unsigned DMG + ZIP release artifacts with improved installer window / 提供未签名 DMG + ZIP，优化安装窗口引导
+- **Note / 说明**: If first launch is blocked by macOS, allow from Privacy & Security / 若首次启动被系统拦截，请在“隐私与安全性”中放行
 
 ### v1.3.1 (2026-02-26)
 - **Change / 调整**: Temporarily disable desktop widget embedding in app distribution builds / 临时关闭应用分发构建中的桌面小组件嵌入

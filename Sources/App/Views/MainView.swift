@@ -1,4 +1,6 @@
 import SwiftUI
+import Charts
+import Combine
 
 private let usageListCoordinateSpaceName = "usageListCoordinateSpace"
 private let dragAutoScrollThrottle: TimeInterval = 0.12
@@ -199,6 +201,30 @@ struct MainView: View {
                 }
             }
             .menuStyle(.borderlessButton)
+
+            if viewModel.settings.showTrendInDashboard {
+                Menu {
+                    ForEach(TrendWindow.allCases) { window in
+                        Button {
+                            viewModel.trendWindow = window
+                        } label: {
+                            HStack {
+                                Text(window.displayName(language: language))
+                                if window == viewModel.trendWindow {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                }
+                label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "chart.line.uptrend.xyaxis")
+                        Text(viewModel.trendWindow.displayName(language: language))
+                    }
+                }
+                .menuStyle(.borderlessButton)
+            }
         }
         .font(.caption)
         .padding(.horizontal, 12)
@@ -215,6 +241,11 @@ struct MainView: View {
                         UsageRowView(
                             data: data,
                             language: language,
+                            isDashboardVisible: viewModel.isDashboardVisible,
+                            showTrend: viewModel.settings.showTrendInDashboard,
+                            trendPoints: viewModel.trendPoints(for: data.accountId, window: viewModel.trendWindow),
+                            trendWindow: viewModel.trendWindow,
+                            confidence: viewModel.dataConfidence(for: data),
                             isRefreshing: viewModel.refreshingAccountIDs.contains(data.accountId),
                             canManualReorder: viewModel.dashboardSortMode == .manual,
                             isDragSource: draggedAccountID == data.accountId,
@@ -271,15 +302,12 @@ struct MainView: View {
                     .font(.caption2)
                     .foregroundColor(.secondary)
             }
-            if viewModel.secondsUntilDataRefresh > 0 {
-                Text("·")
-                .font(.caption2)
-                .foregroundColor(.secondary)
-                Text(language == .english
-                     ? "Next data refresh \(formattedCountdown(viewModel.secondsUntilDataRefresh))"
-                     : "下次数据刷新 \(formattedCountdown(viewModel.secondsUntilDataRefresh))")
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
+            if let nextAutoRefreshDate = viewModel.nextAutoRefreshDate {
+                DataRefreshCountdownLabel(
+                    nextRefreshAt: nextAutoRefreshDate,
+                    language: language,
+                    isActive: viewModel.isDashboardVisible
+                )
             }
             Spacer()
             Button(action: {
@@ -327,21 +355,6 @@ struct MainView: View {
         let formatter = DateFormatter()
         formatter.timeStyle = .short
         return formatter.string(from: date)
-    }
-
-    private func formattedCountdown(_ totalSeconds: Int) -> String {
-        let seconds = max(totalSeconds, 0)
-        let hours = seconds / 3600
-        let minutes = (seconds % 3600) / 60
-        let remainSeconds = seconds % 60
-
-        if hours > 0 {
-            return language == .english ? "\(hours)h \(minutes)m" : "\(hours)小时 \(minutes)分"
-        }
-        if minutes > 0 {
-            return language == .english ? "\(minutes)m \(remainSeconds)s" : "\(minutes)分 \(remainSeconds)秒"
-        }
-        return language == .english ? "\(remainSeconds)s" : "\(remainSeconds)秒"
     }
 
     private func triggerAutoScrollIfNeeded(
@@ -518,6 +531,11 @@ private extension View {
 private struct UsageRowView: View {
     let data: UsageData
     let language: AppLanguage
+    let isDashboardVisible: Bool
+    let showTrend: Bool
+    let trendPoints: [UsageTrendPoint]
+    let trendWindow: TrendWindow
+    let confidence: DataConfidence
     var isRefreshing: Bool = false
     var canManualReorder: Bool = false
     var isDragSource: Bool = false
@@ -534,6 +552,7 @@ private struct UsageRowView: View {
                     errorRow(error)
                 } else {
                     quotaCycleRows
+                    trendRow
                 }
             }
 
@@ -588,7 +607,11 @@ private struct UsageRowView: View {
                             .font(.caption2)
                             .foregroundColor(.secondary)
                             .lineLimit(1)
+
+                        confidenceBadge
                     }
+                } else {
+                    confidenceBadge
                 }
             }
 
@@ -688,6 +711,65 @@ private struct UsageRowView: View {
         }
     }
 
+    @ViewBuilder
+    private var trendRow: some View {
+        if showTrend, trendPoints.count >= 2 {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Image(systemName: "waveform.path.ecg")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    Text(language == .english
+                         ? "Trend \(trendWindow.displayName(language: language))"
+                         : "趋势 \(trendWindow.displayName(language: language))")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    Spacer(minLength: 0)
+                    if let latest = trendPoints.last?.usagePercent {
+                        Text(formatPercent(latest))
+                            .font(.caption2)
+                            .foregroundColor(ringColor(for: 100 - latest))
+                    }
+                }
+
+                Chart(trendPoints) { point in
+                    LineMark(
+                        x: .value("Time", point.timestamp),
+                        y: .value("Usage", point.usagePercent)
+                    )
+                    .interpolationMethod(.catmullRom)
+                    .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+                    .foregroundStyle(providerColor.gradient)
+
+                    AreaMark(
+                        x: .value("Time", point.timestamp),
+                        y: .value("Usage", point.usagePercent)
+                    )
+                    .interpolationMethod(.catmullRom)
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [
+                                providerColor.opacity(0.18),
+                                providerColor.opacity(0.02)
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                }
+                .chartYScale(domain: 0...100)
+                .chartXAxis(.hidden)
+                .chartYAxis(.hidden)
+                .chartPlotStyle { plot in
+                    plot
+                        .background(providerColor.opacity(0.04))
+                        .cornerRadius(6)
+                }
+                .frame(height: 30)
+            }
+        }
+    }
+
     private func quotaCycleRow(_ cycle: QuotaCycle) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(alignment: .center, spacing: 6) {
@@ -719,21 +801,14 @@ private struct UsageRowView: View {
                 }
             }
 
-            if let reset = cycle.reset, let countdown = countdownString(for: reset) {
-                HStack(spacing: 4) {
-                    Image(systemName: "clock.arrow.circlepath")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                    Text(
-                        cycle.isResetEstimated
-                        ? (language == .english ? "Est. \(resetVerb(for: cycle)) in \(countdown)" : "预计 \(countdown) 后\(resetVerb(for: cycle))")
-                        : (language == .english ? "\(resetVerb(for: cycle)) in \(countdown)" : "\(countdown) \(resetVerb(for: cycle))")
-                    )
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
-                    Spacer(minLength: 0)
-                }
+            if let reset = cycle.reset {
+                ResetCountdownLine(
+                    resetAt: reset,
+                    language: language,
+                    isEstimated: cycle.isResetEstimated,
+                    resetVerb: resetVerb(for: cycle),
+                    isActive: isDashboardVisible
+                )
             } else if let unavailable = refreshUnavailableText(for: cycle) {
                 HStack(spacing: 4) {
                     Image(systemName: "clock.badge.xmark")
@@ -822,27 +897,6 @@ private struct UsageRowView: View {
         return .green
     }
     
-    private func countdownString(for refreshTime: Date) -> String? {
-        let now = Date()
-        guard refreshTime > now else { return nil }
-        
-        let seconds = Int(refreshTime.timeIntervalSince(now))
-        let hours = seconds / 3600
-        let minutes = (seconds % 3600) / 60
-        let remainSeconds = seconds % 60
-        
-        if hours > 24 {
-            let days = hours / 24
-            return language == .english ? "\(days)d \(hours % 24)h" : "\(days)天 \(hours % 24)小时"
-        } else if hours > 0 {
-            return language == .english ? "\(hours)h \(minutes)m" : "\(hours)小时 \(minutes)分"
-        } else if minutes > 0 {
-            return language == .english ? "\(minutes)m" : "\(minutes)分"
-        } else {
-            return language == .english ? "\(remainSeconds)s" : "\(remainSeconds)秒"
-        }
-    }
-
     private func formatValue(_ value: Double) -> String {
         if value >= 1000 {
             return String(format: "%.1fK", value / 1000)
@@ -856,6 +910,30 @@ private struct UsageRowView: View {
             return "\(Int(normalized.rounded()))%"
         }
         return String(format: "%.1f%%", normalized)
+    }
+
+    private var confidenceBadge: some View {
+        Text(confidence.level.label(language: language))
+            .font(.system(size: 9, weight: .semibold))
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1.5)
+            .background(confidenceColor.opacity(0.14))
+            .foregroundColor(confidenceColor)
+            .cornerRadius(4)
+            .help(confidence.reason)
+    }
+
+    private var confidenceColor: Color {
+        switch confidence.level {
+        case .high:
+            return .green
+        case .medium:
+            return .orange
+        case .low:
+            return .red
+        case .unknown:
+            return .secondary
+        }
     }
 
     private var quotaCycles: [QuotaCycle] {
@@ -1103,6 +1181,104 @@ private struct UsageRowView: View {
             return nil
         }
     }
+}
+
+private struct DataRefreshCountdownLabel: View {
+    let nextRefreshAt: Date
+    let language: AppLanguage
+    let isActive: Bool
+
+    @State private var now = Date()
+    private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        if let countdown = countdownString(now: now) {
+            Group {
+                Text("·")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                Text(
+                    language == .english
+                    ? "Next data refresh \(countdown)"
+                    : "下次数据刷新 \(countdown)"
+                )
+                .font(.caption2)
+                .foregroundColor(.secondary)
+            }
+            .onReceive(timer) { _ in
+                guard isActive else { return }
+                now = Date()
+            }
+        }
+    }
+
+    private func countdownString(now: Date) -> String? {
+        let seconds = Int(nextRefreshAt.timeIntervalSince(now))
+        guard seconds > 0 else { return nil }
+        return formatCountdown(seconds: seconds, language: language, includeSecondsForMinutes: true)
+    }
+}
+
+private struct ResetCountdownLine: View {
+    let resetAt: Date
+    let language: AppLanguage
+    let isEstimated: Bool
+    let resetVerb: String
+    let isActive: Bool
+
+    @State private var now = Date()
+    private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        if let countdown = countdownString(now: now) {
+            HStack(spacing: 4) {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                Text(
+                    isEstimated
+                    ? (language == .english ? "Est. \(resetVerb) in \(countdown)" : "预计 \(countdown) 后\(resetVerb)")
+                    : (language == .english ? "\(resetVerb) in \(countdown)" : "\(countdown) \(resetVerb)")
+                )
+                .font(.caption2)
+                .foregroundColor(.secondary)
+                .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .onReceive(timer) { _ in
+                guard isActive else { return }
+                now = Date()
+            }
+        }
+    }
+
+    private func countdownString(now: Date) -> String? {
+        let seconds = Int(resetAt.timeIntervalSince(now))
+        guard seconds > 0 else { return nil }
+        return formatCountdown(seconds: seconds, language: language, includeSecondsForMinutes: false)
+    }
+}
+
+private func formatCountdown(seconds: Int, language: AppLanguage, includeSecondsForMinutes: Bool) -> String {
+    let safeSeconds = max(seconds, 0)
+    let hours = safeSeconds / 3600
+    let minutes = (safeSeconds % 3600) / 60
+    let remainSeconds = safeSeconds % 60
+
+    if hours > 24 {
+        let days = hours / 24
+        return language == .english ? "\(days)d \(hours % 24)h" : "\(days)天 \(hours % 24)小时"
+    }
+    if hours > 0 {
+        return language == .english ? "\(hours)h \(minutes)m" : "\(hours)小时 \(minutes)分"
+    }
+    if minutes > 0 {
+        if includeSecondsForMinutes {
+            return language == .english ? "\(minutes)m \(remainSeconds)s" : "\(minutes)分 \(remainSeconds)秒"
+        }
+        return language == .english ? "\(minutes)m" : "\(minutes)分"
+    }
+    return language == .english ? "\(remainSeconds)s" : "\(remainSeconds)秒"
 }
 
 private struct RemainingRingView: View {
