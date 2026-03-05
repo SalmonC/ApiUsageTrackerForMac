@@ -5,6 +5,34 @@ import UserNotifications
 import QuartzCore
 import Combine
 
+/// Registry to safely manage AppDelegate reference for global hotkey handler
+/// Uses weak reference to avoid retain cycles while ensuring thread safety
+private final class HotkeyHandlerRegistry {
+    static let shared = HotkeyHandlerRegistry()
+    private weak var appDelegate: AppDelegate?
+    private let lock = NSLock()
+    
+    private init() {}
+    
+    func register(_ delegate: AppDelegate) {
+        lock.lock()
+        defer { lock.unlock() }
+        appDelegate = delegate
+    }
+    
+    func unregister() {
+        lock.lock()
+        defer { lock.unlock() }
+        appDelegate = nil
+    }
+    
+    func resolve(_ pointer: UnsafeMutableRawPointer) -> AppDelegate? {
+        lock.lock()
+        defer { lock.unlock() }
+        return appDelegate
+    }
+}
+
 @main
 struct ApiUsageTrackerForMacApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
@@ -302,12 +330,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             eventClass: OSType(kEventClassKeyboard),
             eventKind: UInt32(kEventHotKeyPressed)
         )
-        let pointer = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
+        // Use a singleton wrapper to avoid retain cycle while ensuring safety
+        let pointer = UnsafeMutableRawPointer(bitPattern: Int(UInt(bitPattern: ObjectIdentifier(self))))
+        HotkeyHandlerRegistry.shared.register(self)
         let status = InstallEventHandler(
             GetApplicationEventTarget(),
             { _, eventRef, userData in
-                guard let userData else { return noErr }
-                let appDelegate = Unmanaged<AppDelegate>.fromOpaque(userData).takeUnretainedValue()
+                guard let userData,
+                      let appDelegate = HotkeyHandlerRegistry.shared.resolve(userData) else { return noErr }
                 return appDelegate.handleGlobalHotKeyEvent(eventRef)
             },
             1,
@@ -317,6 +347,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
 
         if status != noErr {
+            HotkeyHandlerRegistry.shared.unregister()
             Logger.log("Failed to install global hotkey handler, status: \(status)")
         }
     }
@@ -683,8 +714,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             RemoveEventHandler(hotKeyHandlerRef)
             self.hotKeyHandlerRef = nil
         }
+        HotkeyHandlerRegistry.shared.unregister()
         if let observer = appActivateObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
+            appActivateObserver = nil
         }
     }
 }

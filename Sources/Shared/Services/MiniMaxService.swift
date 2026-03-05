@@ -87,10 +87,14 @@ final class MiniMaxService: UsageService {
             throw APIError.noAPIKey
         }
         
+        try Task.checkCancellation()
+        
         if let result = try? await fetchCodingPlanUsage(apiKey: apiKey) {
             Logger.log("MiniMax: Using Coding Plan API")
             return result
         }
+        
+        try Task.checkCancellation()
         
         if let result = try? await fetchPayAsGoUsage(apiKey: apiKey) {
             Logger.log("MiniMax: Using Pay-As-You-Go API")
@@ -222,6 +226,8 @@ final class GLMService: UsageService {
         let baseURL = detectBaseURL(apiKey: apiKey)
         Logger.log("GLM: Using baseURL: \(baseURL)")
         
+        try Task.checkCancellation()
+        
         // Try user info API first (more reliable for balance)
         do {
             if let userInfo = try await fetchUserInfo(apiKey: apiKey, baseURL: baseURL) {
@@ -277,6 +283,8 @@ final class GLMService: UsageService {
         } catch {
             Logger.log("GLM: User info API failed: \(error)")
         }
+        
+        try Task.checkCancellation()
         
         // Fallback to quota limit API
         Logger.log("GLM: Falling back to quota limit API")
@@ -757,10 +765,13 @@ final class ChatGPTService: UsageService {
         }
         
         let accessToken = try await resolveAccessToken(from: apiKey)
+        try Task.checkCancellation()
+        
         let jwtClaims = decodeJWTPayload(accessToken)
         async let planInfo = fetchPlanInfo(accessToken: accessToken)
         async let limitsInfo = fetchChatRequirements(accessToken: accessToken)
         let (planJSON, limitsJSON) = await (planInfo, limitsInfo)
+        try Task.checkCancellation()
         
         var tokenRemaining: Double?
         var tokenUsed: Double?
@@ -1242,9 +1253,11 @@ final class KIMIService: UsageService {
             throw APIError.noAPIKey
         }
 
+        try Task.checkCancellation()
         var preferredAuthError: APIError?
 
         for endpointKind in preferredOfficialEndpoints(for: apiKey) {
+            try Task.checkCancellation()
             do {
                 let officialResult: UsageResult?
                 switch endpointKind {
@@ -1267,6 +1280,8 @@ final class KIMIService: UsageService {
                 Logger.log("KIMI official \(endpointKind.logLabel) failed: \(error.localizedDescription)")
             }
         }
+        
+        try Task.checkCancellation()
         
         // Legacy fallback probing (kept for compatibility)
         let baseURL = "https://api.moonshot.cn"

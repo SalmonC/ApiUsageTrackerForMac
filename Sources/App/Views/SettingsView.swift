@@ -22,6 +22,11 @@ struct SettingsView: View {
     @State private var criticalThreshold: Int = 90
     @State private var alertCooldownMinutes: Int = 120
     @State private var showTrendInDashboard: Bool = true
+    @State private var editingAccountID: UUID?
+    @State private var nameDraftByAccountID: [UUID: String] = [:]
+    @State private var nameAtEditStartByAccountID: [UUID: String] = [:]
+    @State private var defocusObserverTokens: [NSObjectProtocol] = []
+    @State private var localClickMonitor: Any?
     
     enum SaveButtonState {
         case normal
@@ -42,6 +47,12 @@ struct SettingsView: View {
         }
         .onAppear {
             loadSettings()
+            installDefocusObserversIfNeeded()
+            installLocalClickMonitorIfNeeded()
+        }
+        .onDisappear {
+            removeDefocusObservers()
+            removeLocalClickMonitor()
         }
         .alert(language == .english ? "Delete Account?" : "删除账号？", isPresented: pendingDeleteBinding) {
             Button(language == .english ? "Delete" : "删除", role: .destructive) {
@@ -467,23 +478,27 @@ struct SettingsView: View {
                                         get: { expandedStates[account.id] ?? false },
                                         set: { expandedStates[account.id] = $0 }
                                     ),
+                                    isEditingName: editingAccountID == account.id,
+                                    nameDraft: nameDraftByAccountID[account.id] ?? account.name,
                                     onDelete: {
+                                        forceCommitCurrentEditor()
                                         pendingDeleteAccount = account
                                     },
-                                    onNameEditFinished: { originalName, editedName in
-                                        let trimmed = editedName.trimmingCharacters(in: .whitespacesAndNewlines)
-                                        if trimmed.isEmpty {
-                                            account.name = account.provider.displayName
-                                            autoNamedAccountIDs.insert(account.id)
-                                        } else if editedName != originalName {
-                                            autoNamedAccountIDs.remove(account.id)
-                                        }
+                                    onNameLabelTapped: {
+                                        beginNameEditing(for: account.id)
+                                    },
+                                    onNameDraftChanged: { draft in
+                                        updateNameDraft(for: account.id, draft: draft)
+                                    },
+                                    onNameEditCommitted: {
+                                        commitNameEdit(for: account.id)
                                     },
                                     onProviderChanged: { _, newProvider in
                                         let shouldFollowProvider = autoNamedAccountIDs.contains(account.id)
                                         if shouldFollowProvider {
                                             account.name = newProvider.displayName
                                             autoNamedAccountIDs.insert(account.id)
+                                            nameDraftByAccountID[account.id] = newProvider.displayName
                                         }
                                     },
                                     language: language
@@ -511,8 +526,7 @@ struct SettingsView: View {
             Divider()
             HStack {
                 Button(action: {
-                    saveSettings()
-                    collapseAllAccounts()
+                    commitEditsThenSave()
                 }) {
                     HStack {
                         if saveButtonState == .saved {
@@ -648,11 +662,23 @@ struct SettingsView: View {
         hotkeyError = nil
         saveButtonState = .normal
         isCapabilityNoticeExpanded = false
+        editingAccountID = nil
+        nameDraftByAccountID = [:]
+        nameAtEditStartByAccountID = [:]
         collapseAllAccounts()
         savedDraftSignature = currentDraftSignature()
     }
     
     private func saveSettings() {
+        accounts = accounts.map { account in
+            var normalized = account
+            normalized.name = normalized.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            if normalized.name.isEmpty {
+                normalized.name = normalized.provider.displayName
+            }
+            return normalized
+        }
+
         let settings = AppSettings(
             accounts: accounts,
             refreshInterval: refreshInterval,
@@ -672,6 +698,120 @@ struct SettingsView: View {
                 saveButtonState = .normal
             }
         }
+    }
+
+    private func commitEditsThenSave() {
+        forceCommitCurrentEditor()
+        NSApp.keyWindow?.makeFirstResponder(nil)
+        DispatchQueue.main.async {
+            saveSettings()
+        }
+    }
+
+    private func installDefocusObserversIfNeeded() {
+        guard defocusObserverTokens.isEmpty else { return }
+        let center = NotificationCenter.default
+        let windowToken = center.addObserver(
+            forName: NSWindow.didResignKeyNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            forceCommitCurrentEditor()
+        }
+        let appToken = center.addObserver(
+            forName: NSApplication.didResignActiveNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            forceCommitCurrentEditor()
+        }
+        defocusObserverTokens = [windowToken, appToken]
+    }
+
+    private func removeDefocusObservers() {
+        let center = NotificationCenter.default
+        defocusObserverTokens.forEach { center.removeObserver($0) }
+        defocusObserverTokens.removeAll()
+    }
+
+    private func installLocalClickMonitorIfNeeded() {
+        guard localClickMonitor == nil else { return }
+        localClickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { event in
+            DispatchQueue.main.async {
+                guard editingAccountID != nil else { return }
+                if NSApp.keyWindow?.firstResponder is NSTextView {
+                    return
+                }
+                // Some control clicks transition focus asynchronously; verify once more
+                // on the next runloop turn before committing the edit.
+                if NSApp.keyWindow?.firstResponder == nil {
+                    DispatchQueue.main.async {
+                        guard editingAccountID != nil else { return }
+                        if NSApp.keyWindow?.firstResponder is NSTextView {
+                            return
+                        }
+                        forceCommitCurrentEditor()
+                    }
+                    return
+                }
+                forceCommitCurrentEditor()
+            }
+            return event
+        }
+    }
+
+    private func removeLocalClickMonitor() {
+        guard let monitor = localClickMonitor else { return }
+        NSEvent.removeMonitor(monitor)
+        localClickMonitor = nil
+    }
+
+    private func beginNameEditing(for accountID: UUID) {
+        if editingAccountID != accountID {
+            forceCommitCurrentEditor()
+        }
+        guard let index = accounts.firstIndex(where: { $0.id == accountID }) else { return }
+        editingAccountID = accountID
+        nameDraftByAccountID[accountID] = accounts[index].name
+        nameAtEditStartByAccountID[accountID] = accounts[index].name
+    }
+
+    private func updateNameDraft(for accountID: UUID, draft: String) {
+        nameDraftByAccountID[accountID] = draft
+        guard let index = accounts.firstIndex(where: { $0.id == accountID }) else { return }
+        accounts[index].name = draft
+    }
+
+    private func commitNameEdit(for accountID: UUID) {
+        guard let index = accounts.firstIndex(where: { $0.id == accountID }) else {
+            editingAccountID = nil
+            nameDraftByAccountID.removeValue(forKey: accountID)
+            nameAtEditStartByAccountID.removeValue(forKey: accountID)
+            return
+        }
+
+        let originalName = nameAtEditStartByAccountID[accountID] ?? accounts[index].name
+        var committedName = (nameDraftByAccountID[accountID] ?? accounts[index].name)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if committedName.isEmpty {
+            committedName = accounts[index].provider.displayName
+            autoNamedAccountIDs.insert(accountID)
+        } else if committedName != originalName {
+            autoNamedAccountIDs.remove(accountID)
+        }
+
+        accounts[index].name = committedName
+        nameDraftByAccountID[accountID] = committedName
+        nameAtEditStartByAccountID.removeValue(forKey: accountID)
+        if editingAccountID == accountID {
+            editingAccountID = nil
+        }
+    }
+
+    private func forceCommitCurrentEditor() {
+        guard let accountID = editingAccountID else { return }
+        commitNameEdit(for: accountID)
     }
     
     private func addAccount() {
@@ -698,6 +838,11 @@ struct SettingsView: View {
     }
     
     private func deleteAccount(_ account: APIAccount) {
+        if editingAccountID == account.id {
+            editingAccountID = nil
+        }
+        nameDraftByAccountID.removeValue(forKey: account.id)
+        nameAtEditStartByAccountID.removeValue(forKey: account.id)
         accounts.removeAll { $0.id == account.id }
         autoNamedAccountIDs.remove(account.id)
         expandedStates.removeValue(forKey: account.id)
@@ -796,13 +941,14 @@ struct AccountRowView: View {
     private static let chatGPTGuideURL = URL(string: "https://github.com/SalmonC/ApiUsageTrackerForMac/blob/main/Docs/ACCOUNT_CREDENTIALS_GUIDE.md")!
     @Binding var account: APIAccount
     @Binding var isExpanded: Bool
+    var isEditingName: Bool
+    var nameDraft: String
     var onDelete: () -> Void
-    var onNameEditFinished: ((String, String) -> Void)?
+    var onNameLabelTapped: () -> Void
+    var onNameDraftChanged: (String) -> Void
+    var onNameEditCommitted: () -> Void
     var onProviderChanged: ((APIProvider, APIProvider) -> Void)?
     var language: AppLanguage = .chinese
-    @FocusState private var isNameFieldFocused: Bool
-    @State private var isEditingName: Bool = false
-    @State private var nameAtEditStart: String = ""
     
     var body: some View {
         VStack(alignment: .leading, spacing: isExpanded ? 14 : 0) {
@@ -867,7 +1013,7 @@ struct AccountRowView: View {
                         }
                         .labelsHidden()
                         .onChange(of: account.provider) { oldValue, newValue in
-                            endNameEditing()
+                            onNameEditCommitted()
                             onProviderChanged?(oldValue, newValue)
                         }
                     }
@@ -916,35 +1062,25 @@ struct AccountRowView: View {
                 .stroke(isExpanded ? Color.accentColor.opacity(0.30) : Color.gray.opacity(0.12), lineWidth: 1)
         )
         .shadow(color: .black.opacity(0.03), radius: 2, x: 0, y: 1)
-        .onChange(of: isNameFieldFocused) { _, focused in
-            if !focused && isEditingName {
-                endNameEditing()
-            }
-        }
     }
 
     @ViewBuilder
     private var nameEditorOrLabel: some View {
         if isEditingName {
-            TextField(language == .english ? "Account Name" : "账号名称", text: Binding(
-                get: { account.name },
-                set: { newValue in
-                    account.name = newValue
+            AccountNameEditor(
+                text: Binding(
+                    get: { nameDraft },
+                    set: onNameDraftChanged
+                ),
+                isFocused: isEditingName,
+                onBeginEditing: {},
+                onEndEditing: {
+                    onNameEditCommitted()
                 }
-            ))
-            .textFieldStyle(.roundedBorder)
+            )
             .frame(width: 200)
-            .focused($isNameFieldFocused)
-            .onAppear {
-                DispatchQueue.main.async {
-                    isNameFieldFocused = true
-                }
-            }
-            .onSubmit {
-                endNameEditing()
-            }
         } else {
-            Button(action: beginNameEditing) {
+            Button(action: onNameLabelTapped) {
                 HStack(spacing: 4) {
                     Text(account.name.isEmpty ? account.provider.displayName : account.name)
                         .font(.system(size: 15, weight: .semibold))
@@ -965,26 +1101,7 @@ struct AccountRowView: View {
             isExpanded.toggle()
         }
         if !isExpanded {
-            endNameEditing()
-        }
-    }
-
-    private func beginNameEditing() {
-        nameAtEditStart = account.name
-        isEditingName = true
-        DispatchQueue.main.async {
-            isNameFieldFocused = true
-        }
-    }
-
-    private func endNameEditing() {
-        let shouldCommit = isEditingName
-        let originalName = nameAtEditStart
-        let editedName = account.name
-        isEditingName = false
-        isNameFieldFocused = false
-        if shouldCommit {
-            onNameEditFinished?(originalName, editedName)
+            onNameEditCommitted()
         }
     }
     
@@ -1013,6 +1130,67 @@ struct AccountRowView: View {
         return language == .english
             ? "\(provider.displayName) (remaining quota unsupported)"
             : "\(provider.displayName)（暂不支持余量查询）"
+    }
+}
+
+private struct AccountNameEditor: NSViewRepresentable {
+    @Binding var text: String
+    var isFocused: Bool
+    var onBeginEditing: () -> Void
+    var onEndEditing: () -> Void
+
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        var parent: AccountNameEditor
+        var isProgrammaticTextUpdate = false
+
+        init(parent: AccountNameEditor) {
+            self.parent = parent
+        }
+
+        func controlTextDidBeginEditing(_ notification: Notification) {
+            parent.onBeginEditing()
+        }
+
+        func controlTextDidChange(_ notification: Notification) {
+            guard !isProgrammaticTextUpdate else { return }
+            guard let textField = notification.object as? NSTextField else { return }
+            parent.text = textField.stringValue
+        }
+
+        func controlTextDidEndEditing(_ notification: Notification) {
+            parent.onEndEditing()
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
+    }
+
+    func makeNSView(context: Context) -> NSTextField {
+        let textField = NSTextField(string: text)
+        textField.isBordered = true
+        textField.isBezeled = true
+        textField.bezelStyle = .roundedBezel
+        textField.focusRingType = .default
+        textField.delegate = context.coordinator
+        return textField
+    }
+
+    func updateNSView(_ nsView: NSTextField, context: Context) {
+        context.coordinator.parent = self
+
+        if nsView.stringValue != text {
+            context.coordinator.isProgrammaticTextUpdate = true
+            nsView.stringValue = text
+            context.coordinator.isProgrammaticTextUpdate = false
+        }
+
+        guard let window = nsView.window else { return }
+        if isFocused {
+            if window.firstResponder !== nsView.currentEditor() {
+                window.makeFirstResponder(nsView)
+            }
+        }
     }
 }
 
@@ -1190,10 +1368,15 @@ struct TestConnectionButton: View {
         testResult = nil
         showDetails = false
         
+        // Capture current state before entering async context
+        let currentAccount = account
+        let currentLanguage = language
+        
         Task {
-            let service = getService(for: account.provider)
+            let service = getService(for: currentAccount.provider)
             do {
                 let result = try await service.fetchUsage(apiKey: credential)
+                try Task.checkCancellation()
                 await MainActor.run {
                     if result.remaining != nil ||
                         result.used != nil ||
@@ -1206,26 +1389,31 @@ struct TestConnectionButton: View {
                         result.monthlyRefreshTime != nil ||
                         result.nextRefreshTime != nil {
                         testResult = .success(
-                            summary: language == .english ? "Connection successful" : "连接成功",
-                            details: language == .english
-                            ? "Provider: \(account.provider.displayName)"
-                            : "供应商：\(account.provider.displayName)"
+                            summary: currentLanguage == .english ? "Connection successful" : "连接成功",
+                            details: currentLanguage == .english
+                            ? "Provider: \(currentAccount.provider.displayName)"
+                            : "供应商：\(currentAccount.provider.displayName)"
                         )
                     } else {
                         testResult = .failure(
-                            summary: language == .english ? "Connected but no usable fields" : "连接成功但无可用字段",
-                            details: language == .english
+                            summary: currentLanguage == .english ? "Connected but no usable fields" : "连接成功但无可用字段",
+                            details: currentLanguage == .english
                             ? "Provider endpoint returned success without known usage/subscription fields."
                             : "接口返回成功，但没有识别到可用的用量/订阅字段。"
                         )
                     }
                     isTesting = false
                 }
+            } catch is CancellationError {
+                // Task was cancelled, ignore
+                await MainActor.run {
+                    isTesting = false
+                }
             } catch {
                 await MainActor.run {
                     testResult = .failure(
-                        summary: language == .english ? "Connection failed" : "连接失败",
-                        details: classifiedFailureDetail(error)
+                        summary: currentLanguage == .english ? "Connection failed" : "连接失败",
+                        details: classifiedFailureDetail(error, language: currentLanguage)
                     )
                     isTesting = false
                 }
@@ -1269,40 +1457,41 @@ struct TestConnectionButton: View {
         }
     }
 
-    private func classifiedFailureDetail(_ error: Error) -> String {
+    private func classifiedFailureDetail(_ error: Error, language: AppLanguage? = nil) -> String {
+        let lang = language ?? self.language
         if let apiError = error as? APIError {
             switch apiError {
             case .noAPIKey:
-                return language == .english
+                return lang == .english
                     ? "Type: Missing credential\nPlease input API key/token and retry."
                     : "类型：缺少凭证\n请先输入 API Key/Token 后重试。"
             case .httpError(let code), .httpErrorWithMessage(let code, _):
                 if code == 401 || code == 403 {
-                    return language == .english
+                    return lang == .english
                         ? "Type: Authentication failed (HTTP \(code))\nCredential is invalid, expired, or has insufficient permissions."
                         : "类型：鉴权失败（HTTP \(code)）\n凭证无效、已过期或权限不足。"
                 }
                 if code == 429 {
-                    return language == .english
+                    return lang == .english
                         ? "Type: Rate limited (HTTP 429)\nPlease retry later."
                         : "类型：触发频率限制（HTTP 429）\n请稍后重试。"
                 }
                 if code >= 500 {
-                    return language == .english
+                    return lang == .english
                         ? "Type: Provider service error (HTTP \(code))\nThis is usually temporary."
                         : "类型：供应商服务异常（HTTP \(code)）\n通常为临时问题。"
                 }
-                return language == .english
+                return lang == .english
                     ? "Type: API request failed (HTTP \(code))\n\(error.localizedDescription)"
                     : "类型：接口请求失败（HTTP \(code)）\n\(error.localizedDescription)"
             case .decodingError:
-                return language == .english
+                return lang == .english
                     ? "Type: Response parse failure\nProvider response schema may have changed."
                     : "类型：响应解析失败\n可能是供应商返回结构发生变化。"
             case .networkError(let wrapped):
-                return classifyWrappedError(wrapped)
+                return classifyWrappedError(wrapped, language: lang)
             case .invalidURL, .invalidResponse:
-                return language == .english
+                return lang == .english
                     ? "Type: Invalid response\nProvider endpoint returned unexpected payload."
                     : "类型：响应无效\n供应商接口返回了异常数据。"
             }
@@ -1310,47 +1499,48 @@ struct TestConnectionButton: View {
 
         let lowered = error.localizedDescription.lowercased()
         if lowered.contains("401") || lowered.contains("403") || lowered.contains("unauthorized") || lowered.contains("forbidden") {
-            return language == .english
+            return lang == .english
                 ? "Type: Authentication failed\nCredential is invalid, expired, or unauthorized."
                 : "类型：鉴权失败\n凭证无效、过期或权限不足。"
         }
         if lowered.contains("429") || lowered.contains("rate") {
-            return language == .english
+            return lang == .english
                 ? "Type: Rate limited\nPlease retry later."
                 : "类型：触发频率限制\n请稍后重试。"
         }
         if lowered.contains("decode") || lowered.contains("json") || lowered.contains("parse") {
-            return language == .english
+            return lang == .english
                 ? "Type: Response parse failure\nProvider response schema may have changed."
                 : "类型：响应解析失败\n可能是供应商返回结构发生变化。"
         }
         if lowered.contains("timed out") || lowered.contains("timeout") {
-            return language == .english
+            return lang == .english
                 ? "Type: Request timeout\nNetwork is slow or provider endpoint is overloaded."
                 : "类型：请求超时\n可能是网络较慢或供应商接口拥塞。"
         }
-        return language == .english
+        return lang == .english
             ? "Type: Unknown failure\n\(error.localizedDescription)"
             : "类型：未知错误\n\(error.localizedDescription)"
     }
 
-    private func classifyWrappedError(_ wrapped: Error) -> String {
+    private func classifyWrappedError(_ wrapped: Error, language: AppLanguage? = nil) -> String {
+        let lang = language ?? self.language
         if let urlError = wrapped as? URLError {
             switch urlError.code {
             case .notConnectedToInternet:
-                return language == .english
+                return lang == .english
                     ? "Type: Network unavailable\nPlease check internet connection."
                     : "类型：网络不可用\n请检查网络连接。"
             case .timedOut:
-                return language == .english
+                return lang == .english
                     ? "Type: Request timeout\nProvider did not respond in time."
                     : "类型：请求超时\n供应商接口响应超时。"
             case .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed:
-                return language == .english
+                return lang == .english
                     ? "Type: Endpoint unreachable\nPlease check network/proxy/DNS."
                     : "类型：接口不可达\n请检查网络、代理或 DNS。"
             default:
-                return language == .english
+                return lang == .english
                     ? "Type: Network error\n\(wrapped.localizedDescription)"
                     : "类型：网络错误\n\(wrapped.localizedDescription)"
             }
@@ -1358,7 +1548,7 @@ struct TestConnectionButton: View {
 
         let nsError = wrapped as NSError
         if nsError.domain == NSURLErrorDomain {
-            return language == .english
+            return lang == .english
                 ? "Type: Network error\n\(wrapped.localizedDescription)"
                 : "类型：网络错误\n\(wrapped.localizedDescription)"
         }
@@ -1367,11 +1557,11 @@ struct TestConnectionButton: View {
         // (domain != NSURLErrorDomain), so classify them as provider/API failures.
         let lowered = wrapped.localizedDescription.lowercased()
         if lowered.contains("auth") || lowered.contains("token") || lowered.contains("key") || lowered.contains("permission") {
-            return language == .english
+            return lang == .english
                 ? "Type: Authentication/permission failure\n\(wrapped.localizedDescription)"
                 : "类型：鉴权或权限失败\n\(wrapped.localizedDescription)"
         }
-        return language == .english
+        return lang == .english
             ? "Type: Provider/API failure\n\(wrapped.localizedDescription)"
             : "类型：供应商接口失败\n\(wrapped.localizedDescription)"
     }

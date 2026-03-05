@@ -235,7 +235,7 @@ struct MainView: View {
     
     private var usageListView: some View {
         ScrollViewReader { scrollProxy in
-            ScrollView(.vertical, showsIndicators: true) {
+            ScrollView(.vertical, showsIndicators: false) {
                 LazyVStack(spacing: 12) {
                     ForEach(viewModel.displayUsageData, id: \.accountId) { data in
                         UsageRowView(
@@ -281,6 +281,7 @@ struct MainView: View {
                 .padding(.vertical, 10)
                 .measureHeight(for: .list)
             }
+            .scrollIndicators(.never)
             .background(
                 GeometryReader { proxy in
                     Color.clear.preference(
@@ -351,10 +352,14 @@ struct MainView: View {
         }
     }
     
-    private func formattedTime(_ date: Date) -> String {
+    private static let timeFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.timeStyle = .short
-        return formatter.string(from: date)
+        return formatter
+    }()
+    
+    private func formattedTime(_ date: Date) -> String {
+        Self.timeFormatter.string(from: date)
     }
 
     private func triggerAutoScrollIfNeeded(
@@ -456,7 +461,7 @@ struct MainView: View {
         }
         
         let preferredHeight = header + dividerHeights + summary + contentHeight + footer + safetyPadding
-        let reportThreshold: CGFloat = 1.0
+        let reportThreshold: CGFloat = 2.0
         guard abs(preferredHeight - lastReportedPreferredHeight) > reportThreshold else { return }
         
         lastReportedPreferredHeight = preferredHeight
@@ -464,22 +469,22 @@ struct MainView: View {
     }
     
     private func schedulePreferredHeightReport(immediate: Bool = false, delay: TimeInterval = 0) {
+        pendingHeightReport?.cancel()
+        
         if immediate {
-            pendingHeightReport?.cancel()
             pendingHeightReport = nil
             reportPreferredHeightIfNeeded()
             return
         }
 
-        pendingHeightReport?.cancel()
-        
+        // Note: MainView is a struct (value type), so we don't need weak self
+        // The work item will be cancelled in onDisappear when the view goes away
         let work = DispatchWorkItem {
             reportPreferredHeightIfNeeded()
         }
         pendingHeightReport = work
         
-        let actualDelay = immediate ? 0 : delay
-        DispatchQueue.main.asyncAfter(deadline: .now() + actualDelay, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 }
 

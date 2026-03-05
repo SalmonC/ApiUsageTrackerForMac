@@ -17,6 +17,7 @@ xcuserdata/
 *.app
 *.dmg
 *.pkg
+Artifacts/
 
 # Derived Data
 DerivedData/

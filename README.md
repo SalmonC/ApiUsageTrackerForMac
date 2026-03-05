@@ -267,6 +267,12 @@ Sparkle 发布 / appcast 流程见：
 
 ## Changelog / 更新日志
 
+### v1.0.1 (2026-03-05)
+- **Fix / 修复**: Stabilized account name editing in Settings with reliable commit on blur (inside/outside app) and enter / 修复设置页账号名称编辑，支持应用内外失焦与回车稳定提交
+- **Fix / 修复**: Dashboard applies name changes only after clicking Save Settings while keeping immediate draft preview in Settings / 看板仅在点击“保存设置”后应用名称，设置页仍保持草稿即时预览
+- **Fix / 修复**: Removed refresh-time scrollbar flicker by locking list indicators off and reducing popover height micro-jitter / 通过固定隐藏滚动条并收敛高度微抖，消除刷新时滚动条闪烁
+- **Improve / 优化**: Unified sorting logic between app and widget to reduce inconsistent ordering / 抽取共享排序逻辑，减少应用与小组件排序不一致
+
 ### v1.0.0 (2026-03-04)
 - **Release / 发布**: First stable release of QuotaPulse / QuotaPulse 首个稳定正式版
 - **Update / 更新**: Settings adds GitHub stable release check and README quick access / 设置页新增 GitHub 正式版检查与 README 快速入口

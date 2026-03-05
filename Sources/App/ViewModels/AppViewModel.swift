@@ -74,7 +74,7 @@ final class AppViewModel: ObservableObject {
         let activeAccounts = settings.accounts.filter { $0.isEnabled && !$0.apiKey.isEmpty }
         var orderedResults = Array<UsageData?>(repeating: nil, count: activeAccounts.count)
         
-        await withTaskGroup(of: (Int, UsageData).self) { group in
+        await withTaskGroup(of: (Int, UsageData?).self) { group in
             for (index, account) in activeAccounts.enumerated() {
                 group.addTask {
                     return (index, await Self.fetchUsageData(for: account, language: language))
@@ -101,15 +101,20 @@ final class AppViewModel: ObservableObject {
 
     func refreshAccount(_ accountId: UUID) async {
         guard !isLoading else { return }
-        guard !refreshingAccountIDs.contains(accountId) else { return }
+        guard refreshingAccountIDs.insert(accountId).inserted else { return }
 
         loadSettings()
         guard let account = settings.accounts.first(where: { $0.id == accountId && $0.isEnabled && !$0.apiKey.isEmpty }) else {
+            refreshingAccountIDs.remove(accountId)
             return
         }
 
-        refreshingAccountIDs.insert(accountId)
-        let updatedData = resolveRefreshTime(await Self.fetchUsageData(for: account, language: settings.language))
+        defer { refreshingAccountIDs.remove(accountId) }
+
+        guard let fetched = await Self.fetchUsageData(for: account, language: settings.language) else {
+            return
+        }
+        let updatedData = resolveRefreshTime(fetched)
 
         if let existingIndex = usageData.firstIndex(where: { $0.accountId == accountId }) {
             usageData[existingIndex] = updatedData
@@ -122,11 +127,22 @@ final class AppViewModel: ObservableObject {
         appendSnapshots(from: [updatedData], capturedAt: Date())
         Storage.shared.saveCycleLearningState(cycleLearningState)
         WidgetCenter.shared.reloadAllTimelines()
-        refreshingAccountIDs.remove(accountId)
     }
     
     func saveSettings(_ newSettings: AppSettings) {
         settings = newSettings
+        let accountLookup = Dictionary(uniqueKeysWithValues: newSettings.accounts.map { ($0.id, $0) })
+        usageData = usageData
+            .filter { accountLookup[$0.accountId] != nil }
+            .map { item in
+                guard let account = accountLookup[item.accountId] else { return item }
+                var next = item
+                next.accountName = account.name.isEmpty ? account.provider.displayName : account.name
+                next.provider = account.provider
+                return next
+            }
+        ensureManualOrderContainsCurrentAccounts()
+        Storage.shared.saveUsageData(usageData)
         removeSnapshotsForDeletedAccounts(validIDs: Set(newSettings.accounts.map(\.id)))
         Storage.shared.saveSettings(newSettings)
         Storage.shared.saveRefreshInterval(newSettings.refreshInterval)
@@ -181,37 +197,7 @@ final class AppViewModel: ObservableObject {
     }
 
     var displayUsageData: [UsageData] {
-        switch dashboardSortMode {
-        case .manual:
-            let orderIndex = Dictionary(uniqueKeysWithValues: dashboardManualOrder.enumerated().map { ($1, $0) })
-            return usageData.sorted { lhs, rhs in
-                let l = orderIndex[lhs.accountId] ?? Int.max
-                let r = orderIndex[rhs.accountId] ?? Int.max
-                if l != r { return l < r }
-                return lhs.accountName.localizedCaseInsensitiveCompare(rhs.accountName) == .orderedAscending
-            }
-        case .risk:
-            return usageData.sorted { lhs, rhs in
-                let lRank = riskRank(for: lhs)
-                let rRank = riskRank(for: rhs)
-                if lRank != rRank { return lRank < rRank }
-                if abs(lhs.usagePercentage - rhs.usagePercentage) > .ulpOfOne {
-                    return lhs.usagePercentage > rhs.usagePercentage
-                }
-                return lhs.accountName.localizedCaseInsensitiveCompare(rhs.accountName) == .orderedAscending
-            }
-        case .provider:
-            return usageData.sorted { lhs, rhs in
-                if lhs.provider.displayName != rhs.provider.displayName {
-                    return lhs.provider.displayName.localizedCaseInsensitiveCompare(rhs.provider.displayName) == .orderedAscending
-                }
-                return lhs.accountName.localizedCaseInsensitiveCompare(rhs.accountName) == .orderedAscending
-            }
-        case .name:
-            return usageData.sorted {
-                $0.accountName.localizedCaseInsensitiveCompare($1.accountName) == .orderedAscending
-            }
-        }
+        UsageDataSorting.sort(usageData, mode: dashboardSortMode, manualOrder: dashboardManualOrder)
     }
 
     func setDashboardSortMode(_ mode: DashboardSortMode) {
@@ -392,7 +378,10 @@ final class AppViewModel: ObservableObject {
         return prediction
     }
 
-    nonisolated private static func fetchUsageData(for account: APIAccount, language: AppLanguage) async -> UsageData {
+    nonisolated private static func fetchUsageData(for account: APIAccount, language: AppLanguage) async -> UsageData? {
+        if Task.isCancelled {
+            return nil
+        }
         if let preflightError = await preflightErrorMessage(for: account, language: language) {
             Logger.log("Preflight failed for \(account.provider.rawValue): \(preflightError)")
             return failureUsageData(for: account, errorMessage: preflightError)
@@ -425,6 +414,8 @@ final class AppViewModel: ObservableObject {
                 primaryCycleIsPercentage: result.primaryCycleIsPercentage,
                 secondaryCycleIsPercentage: result.secondaryCycleIsPercentage
             )
+        } catch is CancellationError {
+            return nil
         } catch {
             let message = classifyFetchError(error, language: language)
             Logger.log("Fetch failed for \(account.provider.rawValue): \(message), raw=\(error.localizedDescription)")
@@ -444,13 +435,16 @@ final class AppViewModel: ObservableObject {
             do {
                 return try await service.fetchUsage(apiKey: apiKey)
             } catch {
+                if error is CancellationError {
+                    throw error
+                }
                 lastError = error
                 guard attempt < maxAttempts, UsageMetricsLogic.isRetryableFetchError(error) else {
                     throw error
                 }
                 let backoffNs = UsageMetricsLogic.backoffDelayNanoseconds(attempt: attempt)
                 Logger.log("Retrying \(provider.rawValue) fetch (attempt \(attempt + 1)/\(maxAttempts)) after error: \(error.localizedDescription)")
-                try? await Task.sleep(nanoseconds: backoffNs)
+                try await Task.sleep(nanoseconds: backoffNs)
             }
         }
 
@@ -885,17 +879,6 @@ final class AppViewModel: ObservableObject {
         trendCache.removeAll(keepingCapacity: true)
     }
 
-    private func riskRank(for data: UsageData) -> Int {
-        if data.errorMessage != nil { return 0 }
-        if data.tokenTotal != nil {
-            let pct = data.usagePercentage
-            if pct > 90 { return 1 }
-            if pct > 70 { return 2 }
-            if pct > 50 { return 3 }
-            return 4
-        }
-        return 5
-    }
 }
 
 #if DEBUG

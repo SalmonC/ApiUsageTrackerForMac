@@ -5,14 +5,22 @@ import XCTest
 final class UpdateServiceTests: XCTestCase {
     private func waitUntil(
         timeout: TimeInterval = 1.0,
-        condition: @autoclosure () -> Bool
+        condition: @escaping () -> Bool
     ) {
+        let expectation = XCTestExpectation(description: "Wait for condition")
         let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
-            if condition() { return }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        
+        Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { timer in
+            if condition() || Date() > deadline {
+                timer.invalidate()
+                expectation.fulfill()
+            }
         }
-        XCTFail("Timed out waiting for condition")
+        
+        let result = XCTWaiter.wait(for: [expectation], timeout: timeout + 0.1)
+        if result != .completed || !condition() {
+            XCTFail("Timed out waiting for condition")
+        }
     }
 
     func testCheckForUpdatesTransitionsToUpToDate() {
@@ -31,7 +39,7 @@ final class UpdateServiceTests: XCTestCase {
         )
 
         service.checkForUpdates()
-        waitUntil(condition: service.isChecking == false)
+        waitUntil { !service.isChecking }
         XCTAssertEqual(service.statusMessage, "You're up to date (0.9.3)")
         XCTAssertNotNil(service.lastCheckTime)
     }
@@ -56,7 +64,7 @@ final class UpdateServiceTests: XCTestCase {
         )
 
         service.checkForUpdates()
-        waitUntil(condition: service.isChecking == false)
+        waitUntil { !service.isChecking }
         XCTAssertEqual(openedURL?.absoluteString, "https://github.com/SalmonC/ApiUsageTrackerForMac/releases/tag/v0.9.4")
         XCTAssertTrue((service.statusMessage ?? "").contains("已打开下载页面"))
     }
@@ -72,7 +80,7 @@ final class UpdateServiceTests: XCTestCase {
         )
 
         service.checkForUpdates()
-        waitUntil(condition: service.isChecking == false)
+        waitUntil { !service.isChecking }
         XCTAssertTrue((service.statusMessage ?? "").contains("网络错误"))
     }
 
