@@ -79,6 +79,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var preferredPopoverContentHeight: CGFloat?
     private var pendingPopoverResizeWorkItem: DispatchWorkItem?
     private var pendingPopoverSize: NSSize?
+    private var popoverAnchorTopY: CGFloat?
     private var usageDataObserver: AnyCancellable?
     private let storage = Storage.shared
     private var alertNotificationState: [String: Date] = Storage.shared.loadAlertNotificationState()
@@ -438,10 +439,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             closePopover()
         } else {
             if let button = statusItem?.button {
+                pendingPopoverResizeWorkItem?.cancel()
+                pendingPopoverResizeWorkItem = nil
+                pendingPopoverSize = nil
+                popoverAnchorTopY = nil
                 popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
                 popover.contentViewController?.view.window?.makeKey()
                 NSApp.activate(ignoringOtherApps: true)
                 viewModel.setDashboardVisible(true)
+                DispatchQueue.main.async { [weak self] in
+                    self?.capturePopoverAnchorTop()
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
+                    self?.capturePopoverAnchorTop()
+                }
             }
         }
     }
@@ -451,6 +462,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pendingPopoverResizeWorkItem?.cancel()
         pendingPopoverResizeWorkItem = nil
         pendingPopoverSize = nil
+        popoverAnchorTopY = nil
         popover?.performClose(nil)
     }
     
@@ -621,6 +633,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             pendingPopoverResizeWorkItem?.cancel()
             pendingPopoverResizeWorkItem = nil
             pendingPopoverSize = nil
+            popoverAnchorTopY = nil
             popover.contentSize = newSize
             return
         }
@@ -648,10 +661,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 var targetContentRect = window.contentRect(forFrameRect: currentFrame)
                 targetContentRect.size = targetSize
                 var targetFrame = window.frameRect(forContentRect: targetContentRect)
-
-                // Keep the popover visually anchored to the menu bar by preserving top edge.
-                targetFrame.origin.y = currentFrame.maxY - targetFrame.height
-                targetFrame.origin.x = currentFrame.midX - (targetFrame.width / 2)
+                
+                // Let the system place the popover on initial show. Once that anchor is
+                // stable, only animate vertical size changes around the captured top edge.
+                guard let anchorTopY = self.popoverAnchorTopY else {
+                    popover.contentSize = targetSize
+                    Task { @MainActor in
+                        self.capturePopoverAnchorTop()
+                    }
+                    return
+                }
+                targetFrame.origin.y = anchorTopY - targetFrame.height
+                targetFrame.origin.x = currentFrame.origin.x
 
                 NSAnimationContext.runAnimationGroup { context in
                     context.duration = duration
@@ -659,6 +680,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     window.animator().setFrame(targetFrame, display: true)
                 } completionHandler: {
                     popover.contentSize = targetSize
+                    Task { @MainActor in
+                        self.capturePopoverAnchorTop()
+                    }
                 }
             } else {
                 NSAnimationContext.runAnimationGroup { context in
@@ -671,6 +695,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         
         pendingPopoverResizeWorkItem = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.01, execute: work)
+    }
+
+    private func capturePopoverAnchorTop() {
+        guard let window = popover?.contentViewController?.view.window else { return }
+        popoverAnchorTopY = window.frame.maxY
     }
 
     private func currentPopoverVisibleContentSize(_ popover: NSPopover) -> NSSize {
@@ -730,6 +759,7 @@ extension AppDelegate: @preconcurrency UNUserNotificationCenterDelegate {
 
 extension AppDelegate: NSPopoverDelegate {
     func popoverDidClose(_ notification: Notification) {
+        popoverAnchorTopY = nil
         viewModel.setDashboardVisible(false)
     }
 }

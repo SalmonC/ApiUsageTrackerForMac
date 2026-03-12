@@ -5,7 +5,7 @@ A macOS menu bar application for tracking API usage quotas from various AI provi
 <p align="center">
   <img src="https://img.shields.io/badge/platform-macOS%2014.0+-blue" alt="Platform">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
-  <img src="https://img.shields.io/badge/version-1.2.0-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-1.0.2-blue" alt="Version">
 </p>
 
 ---
@@ -266,6 +266,10 @@ Sparkle 发布 / appcast 流程见：
 ---
 
 ## Changelog / 更新日志
+
+### v1.0.2 (2026-03-12)
+- **Fix / 修复**: Stabilized popover anchoring so the dashboard opens from the menu bar icon instead of occasionally drifting to an unrelated desktop position / 修复看板锚点定位，避免偶发从菜单栏图标脱离并出现在桌面错误位置
+- **Verify / 验证**: Passed automated startup packaging check with `./scripts/auto-verify.sh` in addition to unit tests and Release build / 除单元测试与 Release 构建外，额外通过 `./scripts/auto-verify.sh` 自动启动打包验证
 
 ### v1.0.1 (2026-03-05)
 - **Fix / 修复**: Stabilized account name editing in Settings with reliable commit on blur (inside/outside app) and enter / 修复设置页账号名称编辑，支持应用内外失焦与回车稳定提交
