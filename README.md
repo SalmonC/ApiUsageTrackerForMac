@@ -5,7 +5,7 @@ A macOS menu bar application for tracking API usage quotas from various AI provi
 <p align="center">
   <img src="https://img.shields.io/badge/platform-macOS%2014.0+-blue" alt="Platform">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
-  <img src="https://img.shields.io/badge/version-1.0.2-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-1.0.3-blue" alt="Version">
 </p>
 
 ---
@@ -37,11 +37,12 @@ A macOS menu bar application for tracking API usage quotas from various AI provi
 #### Supported Providers
 | Provider | Type | Features |
 |----------|------|----------|
-| **MiniMax** | Coding Plan / Pay-As-You-Go | Auto-detects API type |
-| **GLM (Zhipu AI)** | Subscription / Pay-As-You-Go | Auto-detects platform (open.bigmodel.cn / api.z.ai) |
+| **MiniMax** | Token Plan | Official Token Plan remaining quota |
 | **Tavily** | Credits | Search quota tracking |
-| **OpenAI** | Pay-As-You-Go | Usage and billing tracking |
-| **KIMI** | Monthly Quota | Moonshot AI usage tracking with monthly quota |
+| **OpenAI** | Organization Costs | Official Costs API via Admin Key |
+| **KIMI** | Balance | Official Moonshot balance tracking |
+| **DeepSeek** | Balance | Official account balance tracking |
+| **Codex** | Local Login | Local Codex quota windows |
 
 #### UI/UX
 - **Collapsible Dashboard** - Expand/collapse accounts to see details
@@ -106,7 +107,7 @@ Optional environment variables:
 2. Click the **Settings** gear icon
 3. Add API accounts:
    - Click **+** to add a new account
-   - Select provider (MiniMax, GLM, Tavily, or OpenAI)
+   - Select provider (MiniMax, Tavily, OpenAI, KIMI, DeepSeek, or Codex)
    - Enter your API key
    - Click **Test Connection** to verify
    - Configure display preferences (show/hide in menu bar)
@@ -114,10 +115,12 @@ Optional environment variables:
 
 ### Getting API Keys
 
-- **MiniMax**: [MiniMax Open Platform](https://platform.minimaxi.com) → API Keys
-- **GLM (Zhipu AI)**: [Z.ai](https://z.ai) or [BigModel](https://bigmodel.cn) → API Keys
+- **MiniMax**: [MiniMax Platform](https://www.minimax.io/platform) → API Keys for a Token Plan account
 - **Tavily**: [Tavily Dashboard](https://app.tavily.com) → API Keys
-- **OpenAI**: [OpenAI Platform](https://platform.openai.com) → API Keys
+- **OpenAI**: [OpenAI Platform](https://platform.openai.com/settings/organization/admin-keys) → Organization Admin Keys
+- **KIMI**: [Moonshot Platform](https://platform.moonshot.cn/console/api-keys) → API Keys
+- **DeepSeek**: [DeepSeek Platform](https://platform.deepseek.com/api_keys) → API Keys
+- **Codex**: Install Codex CLI, run `codex login`, then complete at least one Codex session. No credential is pasted into QuotaPulse.
 
 ### Usage
 
@@ -161,11 +164,12 @@ Optional environment variables:
 #### 支持的提供商
 | 提供商 | 类型 | 功能 |
 |--------|------|------|
-| **MiniMax** | Coding Plan / 按量付费 | 自动检测 API 类型 |
-| **GLM (智谱AI)** | 订阅 / 按量付费 | 自动检测平台 (open.bigmodel.cn / api.z.ai) |
+| **MiniMax** | Token Plan | 官方 Token Plan 余量查询 |
 | **Tavily** | 额度 | 搜索配额追踪 |
-| **OpenAI** | 按量付费 | 用量和账单追踪 |
-| **KIMI** | 月度额度 | Moonshot AI 用量追踪，支持月度额度 |
+| **OpenAI** | 组织 Costs | 通过 Admin Key 调用官方 Costs API |
+| **KIMI** | 余额 | Moonshot 官方余额查询 |
+| **DeepSeek** | 余额 | 官方账户余额查询 |
+| **Codex** | 本机登录 | 本机 Codex 额度周期 |
 
 #### 界面设计
 - **可折叠仪表盘** - 展开/折叠账户查看详情
@@ -230,7 +234,7 @@ Sparkle 发布 / appcast 流程见：
 2. 点击**设置**齿轮图标
 3. 添加 API 账户：
    - 点击 **+** 添加新账户
-   - 选择提供商（MiniMax、GLM、Tavily 或 OpenAI）
+   - 选择提供商（MiniMax、Tavily、OpenAI、KIMI、DeepSeek 或 Codex）
    - 输入 API Key
    - 点击**测试连接**验证有效性
    - 配置显示偏好（在菜单栏中显示/隐藏）
@@ -238,10 +242,12 @@ Sparkle 发布 / appcast 流程见：
 
 ### 获取 API Key
 
-- **MiniMax**: [MiniMax 开放平台](https://platform.minimaxi.com) → API Keys
-- **GLM (智谱AI)**: [Z.ai](https://z.ai) 或 [BigModel](https://bigmodel.cn) → API Keys
+- **MiniMax**: [MiniMax 平台](https://www.minimax.io/platform) → 已开通 Token Plan 账号的 API Keys
 - **Tavily**: [Tavily 控制台](https://app.tavily.com) → API Keys
-- **OpenAI**: [OpenAI 平台](https://platform.openai.com) → API Keys
+- **OpenAI**: [OpenAI 平台](https://platform.openai.com/settings/organization/admin-keys) → 组织 Admin Keys
+- **KIMI**: [Moonshot 平台](https://platform.moonshot.cn/console/api-keys) → API Keys
+- **DeepSeek**: [DeepSeek 平台](https://platform.deepseek.com/api_keys) → API Keys
+- **Codex**: 安装 Codex CLI，运行 `codex login` 并至少完成一次 Codex 会话；无需在 QuotaPulse 粘贴凭证。
 
 ### 使用说明
 

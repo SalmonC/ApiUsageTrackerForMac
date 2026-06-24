@@ -72,6 +72,7 @@ struct UsageResult {
     var subscriptionPlan: String? = nil
     var primaryCycleIsPercentage: Bool? = nil
     var secondaryCycleIsPercentage: Bool? = nil
+    var balanceDetails: [CurrencyBalance] = []
 }
 
 protocol UsageService {
@@ -79,122 +80,188 @@ protocol UsageService {
     func fetchUsage(apiKey: String) async throws -> UsageResult
 }
 
+enum DeepSeekBalanceLogic {
+    static func addEstimatedConsumption(
+        to current: [CurrencyBalance],
+        previous: [CurrencyBalance]
+    ) -> [CurrencyBalance] {
+        let previousByCurrency = Dictionary(uniqueKeysWithValues: previous.map { ($0.currency, $0.total) })
+        return current.map { balance in
+            var updated = balance
+            if let oldTotal = previousByCurrency[balance.currency] {
+                let decrease = oldTotal - balance.total
+                updated.estimatedConsumption = decrease > 0.000_001 ? decrease : nil
+            }
+            return updated
+        }
+    }
+}
+
+final class DeepSeekService: UsageService {
+    let provider: APIProvider = .deepSeek
+
+    func fetchUsage(apiKey: String) async throws -> UsageResult {
+        guard !apiKey.isEmpty else { throw APIError.noAPIKey }
+        guard let url = URL(string: "https://api.deepseek.com/user/balance") else {
+            throw APIError.invalidURL
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = 15
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw APIError.invalidResponse
+            }
+            guard httpResponse.statusCode == 200 else {
+                throw APIError.httpError(httpResponse.statusCode)
+            }
+            return try Self.parseBalanceResponse(data)
+        } catch let error as APIError {
+            throw error
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let error as DecodingError {
+            throw APIError.decodingError(error)
+        } catch {
+            throw APIError.networkError(error)
+        }
+    }
+
+    static func parseBalanceResponse(_ data: Data) throws -> UsageResult {
+        let response = try JSONDecoder().decode(DeepSeekBalanceResponse.self, from: data)
+        guard response.isAvailable else {
+            throw APIError.httpErrorWithMessage(403, "DeepSeek 账户余额当前不可用，请检查账户状态")
+        }
+        guard !response.balanceInfos.isEmpty else {
+            throw APIError.invalidResponse
+        }
+        let balances = try response.balanceInfos.map { info in
+            guard
+                let total = Double(info.totalBalance),
+                let granted = Double(info.grantedBalance),
+                let toppedUp = Double(info.toppedUpBalance)
+            else {
+                throw APIError.invalidResponse
+            }
+            return CurrencyBalance(
+                currency: info.currency.uppercased(),
+                total: total,
+                granted: granted,
+                toppedUp: toppedUp
+            )
+        }
+        return UsageResult(
+            remaining: balances.first?.total,
+            used: nil,
+            total: nil,
+            refreshTime: nil,
+            balanceDetails: balances
+        )
+    }
+}
+
+private struct DeepSeekBalanceResponse: Decodable {
+    let isAvailable: Bool
+    let balanceInfos: [DeepSeekBalanceInfo]
+
+    enum CodingKeys: String, CodingKey {
+        case isAvailable = "is_available"
+        case balanceInfos = "balance_infos"
+    }
+}
+
+private struct DeepSeekBalanceInfo: Decodable {
+    let currency: String
+    let totalBalance: String
+    let grantedBalance: String
+    let toppedUpBalance: String
+
+    enum CodingKeys: String, CodingKey {
+        case currency
+        case totalBalance = "total_balance"
+        case grantedBalance = "granted_balance"
+        case toppedUpBalance = "topped_up_balance"
+    }
+}
+
 final class MiniMaxService: UsageService {
     let provider: APIProvider = .miniMax
-    
+
     func fetchUsage(apiKey: String) async throws -> UsageResult {
-        guard !apiKey.isEmpty else {
-            throw APIError.noAPIKey
-        }
-        
+        guard !apiKey.isEmpty else { throw APIError.noAPIKey }
         try Task.checkCancellation()
-        
-        if let result = try? await fetchCodingPlanUsage(apiKey: apiKey) {
-            Logger.log("MiniMax: Using Coding Plan API")
-            return result
-        }
-        
-        try Task.checkCancellation()
-        
-        if let result = try? await fetchPayAsGoUsage(apiKey: apiKey) {
-            Logger.log("MiniMax: Using Pay-As-You-Go API")
-            return result
-        }
-        
-        throw APIError.networkError(NSError(domain: "MiniMax", code: -1, userInfo: [NSLocalizedDescriptionKey: "无法获取用量信息"]))
+        return try await fetchTokenPlanUsage(apiKey: apiKey)
     }
-    
-    private func fetchCodingPlanUsage(apiKey: String) async throws -> UsageResult? {
-        guard let url = URL(string: "https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains") else {
-            return nil
+
+    private func fetchTokenPlanUsage(apiKey: String) async throws -> UsageResult {
+        guard let url = URL(string: "https://www.minimax.io/v1/token_plan/remains") else {
+            throw APIError.invalidURL
         }
-        
+
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 15
-        
+
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
-            
-            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-                return nil
+            guard let httpResponse = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+            Logger.log("MiniMax Token Plan API: HTTP \(httpResponse.statusCode)")
+
+            if httpResponse.statusCode == 401 || httpResponse.statusCode == 403 {
+                throw APIError.httpErrorWithMessage(httpResponse.statusCode, "MiniMax API Key 无效或无 Token Plan 查询权限")
             }
-            
-            let decoded = try JSONDecoder().decode(MiniMaxCodingResponse.self, from: data)
-            
+            guard httpResponse.statusCode == 200 else {
+                throw APIError.httpError(httpResponse.statusCode)
+            }
+
+            let decoded = try JSONDecoder().decode(MiniMaxTokenPlanResponse.self, from: data)
             guard let modelData = decoded.modelRemains.first else {
-                return nil
+                throw APIError.httpErrorWithMessage(200, "MiniMax 官方 Token Plan 接口未返回额度数据")
             }
-            
-            let used = modelData.currentIntervalTotalCount - modelData.currentIntervalUsageCount
-            
-            Logger.log("MiniMax Coding Plan: remaining=\(modelData.currentIntervalUsageCount), used=\(used), total=\(modelData.currentIntervalTotalCount)")
-            
+
+            let used = max(0, modelData.currentIntervalTotalCount - modelData.currentIntervalUsageCount)
+            Logger.log("MiniMax Token Plan: remaining=\(modelData.currentIntervalUsageCount), used=\(used), total=\(modelData.currentIntervalTotalCount)")
+
             return UsageResult(
                 remaining: Double(modelData.currentIntervalUsageCount),
                 used: Double(used),
                 total: Double(modelData.currentIntervalTotalCount),
                 refreshTime: Date(timeIntervalSince1970: TimeInterval(modelData.endTime) / 1000)
             )
+        } catch let error as APIError {
+            throw error
         } catch {
-            Logger.log("MiniMax Coding Plan API failed: \(error.localizedDescription)")
-            return nil
-        }
-    }
-    
-    private func fetchPayAsGoUsage(apiKey: String) async throws -> UsageResult? {
-        guard let url = URL(string: "https://api.minimax.chat/v1/billing") else {
-            return nil
-        }
-        
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 15
-        
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            
-            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-                return nil
-            }
-            
-            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let dataObj = json["data"] as? [String: Any] {
-                let balance = dataObj["balance"] as? Double ?? 0
-                Logger.log("MiniMax Pay-As-You-Go: balance=\(balance)")
-                return UsageResult(remaining: balance, used: nil, total: nil, refreshTime: nil)
-            }
-            
-            return nil
-        } catch {
-            Logger.log("MiniMax Pay-As-You-Go API failed: \(error.localizedDescription)")
-            return nil
+            Logger.log("MiniMax Token Plan API failed: \(error.localizedDescription)")
+            throw APIError.networkError(error)
         }
     }
 }
 
-struct MiniMaxCodingResponse: Codable {
-    let modelRemains: [MiniMaxCodingData]
-    let baseResp: BaseResp
-    
+struct MiniMaxTokenPlanResponse: Codable {
+    let modelRemains: [MiniMaxTokenPlanData]
+    let baseResp: BaseResp?
+
     enum CodingKeys: String, CodingKey {
         case modelRemains = "model_remains"
         case baseResp = "base_resp"
     }
 }
 
-struct MiniMaxCodingData: Codable {
+struct MiniMaxTokenPlanData: Codable {
     let startTime: Int
     let endTime: Int
     let remainsTime: Int
     let currentIntervalTotalCount: Int
     let currentIntervalUsageCount: Int
     let modelName: String
-    
+
     enum CodingKeys: String, CodingKey {
         case startTime = "start_time"
         case endTime = "end_time"
@@ -208,300 +275,12 @@ struct MiniMaxCodingData: Codable {
 struct BaseResp: Codable {
     let statusCode: Int
     let statusMsg: String
-    
+
     enum CodingKeys: String, CodingKey {
         case statusCode = "status_code"
         case statusMsg = "status_msg"
     }
 }
-
-final class GLMService: UsageService {
-    let provider: APIProvider = .glm
-    
-    func fetchUsage(apiKey: String) async throws -> UsageResult {
-        guard !apiKey.isEmpty else {
-            throw APIError.noAPIKey
-        }
-        
-        let baseURL = detectBaseURL(apiKey: apiKey)
-        Logger.log("GLM: Using baseURL: \(baseURL)")
-        
-        try Task.checkCancellation()
-        
-        // Try user info API first (more reliable for balance)
-        do {
-            if let userInfo = try await fetchUserInfo(apiKey: apiKey, baseURL: baseURL) {
-                Logger.log("GLM: Got user info response: \(userInfo)")
-                
-                // Try to parse wallet data
-                if let wallet = userInfo["wallet"] as? [String: Any] {
-                    Logger.log("GLM: Wallet data found: \(wallet)")
-                    let total = parseNumber(wallet["totalQuota"]) ?? parseNumber(wallet["total_quota"]) ?? parseNumber(wallet["total"])
-                    let used = parseNumber(wallet["usedQuota"]) ?? parseNumber(wallet["used_quota"]) ?? parseNumber(wallet["used"])
-                    let remaining = parseNumber(wallet["remainQuota"]) ?? parseNumber(wallet["remain_quota"]) ?? parseNumber(wallet["remaining"])
-                    
-                    Logger.log("GLM: Parsed wallet - total=\(String(describing: total)), used=\(String(describing: used)), remaining=\(String(describing: remaining))")
-                    
-                    if let t = total, t > 0 {
-                        let finalUsed = used ?? 0
-                        let finalRemaining = remaining ?? max(0, t - finalUsed)
-                        Logger.log("GLM: Using wallet data - remaining=\(finalRemaining), used=\(finalUsed), total=\(t)")
-                        return UsageResult(remaining: finalRemaining, used: finalUsed, total: t, refreshTime: nil)
-                    }
-                }
-                
-                // Try alternative data structures
-                if let data = userInfo["data"] as? [String: Any] {
-                    if let wallet = data["wallet"] as? [String: Any] {
-                        let total = parseNumber(wallet["totalQuota"]) ?? parseNumber(wallet["total"])
-                        let used = parseNumber(wallet["usedQuota"]) ?? parseNumber(wallet["used"])
-                        let remaining = parseNumber(wallet["remainQuota"]) ?? parseNumber(wallet["remaining"])
-                        
-                        if let t = total, t > 0 {
-                            let finalUsed = used ?? 0
-                            let finalRemaining = remaining ?? max(0, t - finalUsed)
-                            Logger.log("GLM: Using data.wallet - remaining=\(finalRemaining), used=\(finalUsed), total=\(t)")
-                            return UsageResult(remaining: finalRemaining, used: finalUsed, total: t, refreshTime: nil)
-                        }
-                    }
-                }
-                
-                // Try quota info directly
-                if let quota = userInfo["quota"] as? [String: Any] {
-                    let total = parseNumber(quota["total"])
-                    let used = parseNumber(quota["used"])
-                    let remaining = parseNumber(quota["remaining"])
-                    
-                    if let t = total, t > 0 {
-                        let finalUsed = used ?? 0
-                        let finalRemaining = remaining ?? max(0, t - finalUsed)
-                        Logger.log("GLM: Using quota - remaining=\(finalRemaining), used=\(finalUsed), total=\(t)")
-                        return UsageResult(remaining: finalRemaining, used: finalUsed, total: t, refreshTime: nil)
-                    }
-                }
-            }
-        } catch {
-            Logger.log("GLM: User info API failed: \(error)")
-        }
-        
-        try Task.checkCancellation()
-        
-        // Fallback to quota limit API
-        Logger.log("GLM: Falling back to quota limit API")
-        async let modelUsage = fetchModelUsage(apiKey: apiKey, baseURL: baseURL)
-        async let quotaLimit = fetchQuotaLimit(apiKey: apiKey, baseURL: baseURL)
-        
-        let (modelData, quotaData) = try await (modelUsage, quotaLimit)
-        
-        var remaining: Double?
-        var total: Double?
-        var used: Double?
-        var refreshTime: Date?
-        
-        if let quota = quotaData {
-            Logger.log("GLM: Got quota data: \(quota)")
-            
-            // Try limits array
-            if let limits = quota["limits"] as? [[String: Any]] {
-                for limit in limits {
-                    Logger.log("GLM: Processing limit: \(limit)")
-                    if let type = limit["type"] as? String {
-                        // Try various field names
-                        let limitTotal = parseNumber(limit["usage"]) ?? parseNumber(limit["total"]) ?? parseNumber(limit["limit"]) ?? parseNumber(limit["max"])
-                        let currentValue = parseNumber(limit["currentValue"]) ?? parseNumber(limit["current"]) ?? parseNumber(limit["used"])
-                        let refreshTimestamp = parseNumber(limit["refreshTime"]) ?? parseNumber(limit["refresh_time"])
-                        
-                        Logger.log("GLM: Limit type=\(type), total=\(String(describing: limitTotal)), used=\(String(describing: currentValue))")
-                        
-                        if type == "TOKENS_LIMIT" || type == "TPM_LIMIT" || type == "QPM_LIMIT" {
-                            if let lt = limitTotal {
-                                total = lt
-                                used = currentValue ?? 0
-                                remaining = max(0, lt - used!)
-                                if let rt = refreshTimestamp, rt > 0 {
-                                    refreshTime = Date(timeIntervalSince1970: rt / 1000)
-                                }
-                                break
-                            }
-                        }
-                    }
-                }
-            }
-            
-            // Try direct quota fields
-            if total == nil || total == 0 {
-                total = parseNumber(quota["total"]) ?? parseNumber(quota["totalQuota"])
-                used = parseNumber(quota["used"]) ?? parseNumber(quota["usedQuota"])
-                remaining = parseNumber(quota["remaining"]) ?? parseNumber(quota["remainQuota"])
-                
-                if let t = total, t > 0 {
-                    let u = used ?? 0
-                    let r = remaining ?? max(0, t - u)
-                    Logger.log("GLM: Using direct quota fields - total=\(t), used=\(u), remaining=\(r)")
-                    total = t
-                    used = u
-                    remaining = r
-                }
-            }
-        }
-        
-        // If still no data, try model usage
-        if used == nil || used == 0, let model = modelData {
-            Logger.log("GLM: Got model usage data: \(model)")
-            if let dataObj = model["data"] as? [String: Any] {
-                if let totalUsage = dataObj["totalUsage"] as? [String: Any] {
-                    used = parseNumber(totalUsage["totalTokensUsage"]) ?? parseNumber(totalUsage["total_tokens"])
-                } else {
-                    used = parseNumber(dataObj["totalUsage"]) ?? parseNumber(dataObj["total_tokens"]) ?? parseNumber(dataObj["usage"])
-                }
-                if let u = used {
-                    Logger.log("GLM: Using model usage - used=\(u)")
-                    if let t = total {
-                        remaining = max(0, t - u)
-                    }
-                }
-            }
-        }
-        
-        Logger.log("GLM Final Result: remaining=\(String(describing: remaining)), used=\(String(describing: used)), total=\(String(describing: total)), refreshTime=\(String(describing: refreshTime))")
-        return UsageResult(remaining: remaining, used: used, total: total, refreshTime: refreshTime)
-    }
-    
-    private func fetchUserInfo(apiKey: String, baseURL: String) async throws -> [String: Any]? {
-        // Try multiple possible endpoints for user info
-        let possibleEndpoints = [
-            "/api/user/info",
-            "/api/user/balance",
-            "/api/resources",
-            "/api/account/info",
-            "/api/user"
-        ]
-        
-        for endpoint in possibleEndpoints {
-            let urlString = "\(baseURL)\(endpoint)"
-            
-            guard let url = URL(string: urlString) else {
-                continue
-            }
-            
-            var request = URLRequest(url: url)
-            request.httpMethod = "GET"
-            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.timeoutInterval = 10
-            
-            do {
-                let (data, response) = try await URLSession.shared.data(for: request)
-                
-                guard let httpResponse = response as? HTTPURLResponse else {
-                    continue
-                }
-                
-                Logger.log("GLM \(endpoint): HTTP \(httpResponse.statusCode)")
-                
-                if httpResponse.statusCode == 200 {
-                    if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                        Logger.log("GLM \(endpoint) Response: \(json)")
-                        return json
-                    }
-                }
-            } catch {
-                Logger.log("GLM \(endpoint) failed: \(error.localizedDescription)")
-            }
-        }
-        
-        return nil
-    }
-    
-    private func detectBaseURL(apiKey: String) -> String {
-        if apiKey.contains(".z.ai") || apiKey.hasPrefix("z-") {
-            return "https://api.z.ai"
-        }
-        return "https://open.bigmodel.cn"
-    }
-    
-    private func fetchModelUsage(apiKey: String, baseURL: String) async throws -> [String: Any]? {
-        let now = Date()
-        let calendar = Calendar.current
-        let startOfDay = calendar.startOfDay(for: now)
-        let endOfDay = calendar.date(byAdding: .day, value: 1, to: startOfDay)!
-        
-        let dateFormatter = DateFormatter()
-        dateFormatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
-        
-        let startTime = dateFormatter.string(from: startOfDay)
-        let endTime = dateFormatter.string(from: endOfDay)
-        
-        guard var components = URLComponents(string: "\(baseURL)/api/monitor/usage/model-usage") else {
-            throw APIError.invalidURL
-        }
-        components.queryItems = [
-            URLQueryItem(name: "startTime", value: startTime),
-            URLQueryItem(name: "endTime", value: endTime)
-        ]
-        
-        guard let url = components.url else {
-            throw APIError.invalidURL
-        }
-        
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 15
-        
-        let (data, response) = try await URLSession.shared.data(for: request)
-        
-        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-            return nil
-        }
-        
-        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            Logger.log("GLM model-usage Response: \(json)")
-            return json
-        }
-        
-        return nil
-    }
-    
-    private func fetchQuotaLimit(apiKey: String, baseURL: String) async throws -> [String: Any]? {
-        let urlString = "\(baseURL)/api/monitor/usage/quota/limit"
-        
-        guard let url = URL(string: urlString) else {
-            throw APIError.invalidURL
-        }
-        
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 15
-        
-        let (data, response) = try await URLSession.shared.data(for: request)
-        
-        guard let httpResponse = response as? HTTPURLResponse else {
-            return nil
-        }
-        
-        Logger.log("GLM quota-limit: HTTP \(httpResponse.statusCode)")
-        
-        if httpResponse.statusCode != 200 {
-            if let errorStr = String(data: data, encoding: .utf8) {
-                Logger.log("GLM quota-limit Error Response: \(errorStr)")
-            }
-            return nil
-        }
-        
-        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            Logger.log("GLM quota-limit Response: \(json)")
-            return json
-        }
-        
-        return nil
-    }
-}
-
-
 final class TavilyService: UsageService {
     let provider: APIProvider = .tavily
     
@@ -649,966 +428,194 @@ final class TavilyService: UsageService {
 
 final class OpenAIService: UsageService {
     let provider: APIProvider = .openAI
-    
+
     func fetchUsage(apiKey: String) async throws -> UsageResult {
-        guard !apiKey.isEmpty else {
-            throw APIError.noAPIKey
-        }
-        
-        // OpenAI doesn't have a public usage API, so we check billing/subscription info
-        guard let url = URL(string: "https://api.openai.com/v1/dashboard/billing/subscription") else {
+        guard !apiKey.isEmpty else { throw APIError.noAPIKey }
+
+        let calendar = Calendar(identifier: .gregorian)
+        let now = Date()
+        guard let startOfMonth = calendar.date(from: calendar.dateComponents([.year, .month], from: now)) else {
             throw APIError.invalidURL
         }
-        
+        let startTime = Int(startOfMonth.timeIntervalSince1970)
+        let endTime = Int(now.timeIntervalSince1970)
+        guard let url = URL(string: "https://api.openai.com/v1/organization/costs?start_time=\(startTime)&end_time=\(endTime)&bucket_width=1d&limit=180") else {
+            throw APIError.invalidURL
+        }
+
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 15
-        
+
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
-            
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw APIError.invalidResponse
+            guard let httpResponse = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+            Logger.log("OpenAI Costs API: HTTP \(httpResponse.statusCode)")
+
+            if httpResponse.statusCode == 401 || httpResponse.statusCode == 403 {
+                throw APIError.httpErrorWithMessage(httpResponse.statusCode, "OpenAI Costs API 需要组织 Admin Key")
             }
-            
-            Logger.log("OpenAI API: HTTP \(httpResponse.statusCode)")
-            
-            if httpResponse.statusCode == 401 {
-                throw APIError.httpErrorWithMessage(401, "Invalid API Key")
+            guard httpResponse.statusCode == 200 else { throw APIError.httpError(httpResponse.statusCode) }
+
+            let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            let parsed = Self.parseCostsResponse(json)
+            guard let cost = parsed.totalCost else {
+                throw APIError.decodingError(NSError(domain: "OpenAI", code: -1, userInfo: [NSLocalizedDescriptionKey: "Costs API 未返回金额字段"]))
             }
-            
-            if httpResponse.statusCode != 200 {
-                throw APIError.httpError(httpResponse.statusCode)
-            }
-            
-            // Try to parse subscription info
-            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                Logger.log("OpenAI Response: \(json)")
-                
-                var total: Double = 0
-                var used: Double = 0
-                var remaining: Double = 0
-                
-                // Parse hard_limit_usd (total limit)
-                if let hardLimit = json["hard_limit_usd"] as? Double {
-                    total = hardLimit
-                }
-                
-                // Get usage for current month
-                if let usage = try? await fetchUsageForCurrentMonth(apiKey: apiKey) {
-                    used = usage
-                    remaining = max(0, total - used)
-                }
-                
-                Logger.log("OpenAI API Success: remaining=\(remaining), used=\(used), total=\(total)")
-                return UsageResult(remaining: remaining, used: used, total: total, refreshTime: nil)
-            }
-            
-            throw APIError.decodingError(NSError(domain: "", code: 0))
+
+            let currency = parsed.currency?.uppercased() ?? "USD"
+            Logger.log("OpenAI Costs API Success: cost=\(cost), currency=\(currency)")
+            return UsageResult(
+                remaining: cost,
+                used: nil,
+                total: nil,
+                refreshTime: nil,
+                subscriptionPlan: currency,
+                balanceDetails: [CurrencyBalance(currency: currency, total: cost, granted: 0, toppedUp: cost)]
+            )
         } catch let error as APIError {
             throw error
         } catch {
-            Logger.log("OpenAI API Error: \(error.localizedDescription)")
+            Logger.log("OpenAI Costs API Error: \(error.localizedDescription)")
             throw APIError.networkError(error)
         }
     }
-    
-    private func fetchUsageForCurrentMonth(apiKey: String) async throws -> Double {
-        let calendar = Calendar.current
-        let now = Date()
-        let startOfMonth = calendar.date(from: calendar.dateComponents([.year, .month], from: now))!
-        let endOfMonth = calendar.date(byAdding: DateComponents(month: 1, day: -1), to: startOfMonth)!
-        
-        let dateFormatter = DateFormatter()
-        dateFormatter.dateFormat = "yyyy-MM-dd"
-        
-        let startDate = dateFormatter.string(from: startOfMonth)
-        let endDate = dateFormatter.string(from: endOfMonth)
-        
-        guard let url = URL(string: "https://api.openai.com/v1/dashboard/billing/usage?start_date=\(startDate)&end_date=\(endDate)") else {
-            return 0
-        }
-        
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 15
-        
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            
-            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200,
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let totalUsage = json["total_usage"] as? Double else {
-                return 0
+
+    static func parseCostsResponse(_ json: [String: Any]?) -> (totalCost: Double?, currency: String?) {
+        guard let buckets = json?["data"] as? [[String: Any]] else { return (nil, nil) }
+        var total = 0.0
+        var hasAmount = false
+        var currency: String?
+
+        for bucket in buckets {
+            guard let results = bucket["results"] as? [[String: Any]] else { continue }
+            for result in results {
+                guard let amount = result["amount"] as? [String: Any] else { continue }
+                if let value = parseNumber(amount["value"]) {
+                    total += value
+                    hasAmount = true
+                }
+                if currency == nil, let parsedCurrency = amount["currency"] as? String {
+                    currency = parsedCurrency
+                }
             }
-            
-            // Convert from cents to dollars
-            return totalUsage / 100.0
-        } catch {
-            return 0
         }
+
+        return (hasAmount ? total : nil, currency)
     }
 }
-
-// MARK: - ChatGPT (Web Subscription) Service
-
-final class ChatGPTService: UsageService {
-    let provider: APIProvider = .chatGPT
-    
-    func fetchUsage(apiKey: String) async throws -> UsageResult {
-        guard !apiKey.isEmpty else {
-            throw APIError.noAPIKey
-        }
-        
-        let accessToken = try await resolveAccessToken(from: apiKey)
-        try Task.checkCancellation()
-        
-        let jwtClaims = decodeJWTPayload(accessToken)
-        async let planInfo = fetchPlanInfo(accessToken: accessToken)
-        async let limitsInfo = fetchChatRequirements(accessToken: accessToken)
-        let (planJSON, limitsJSON) = await (planInfo, limitsInfo)
-        try Task.checkCancellation()
-        
-        var tokenRemaining: Double?
-        var tokenUsed: Double?
-        var tokenTotal: Double?
-        var refreshTime: Date?
-        
-        var monthlyRemaining: Double?
-        var monthlyUsed: Double?
-        var monthlyTotal: Double?
-        var monthlyRefreshTime: Date?
-        var subscriptionPlan: String?
-        
-        var hasAnyData = false
-        
-        if let limitsJSON {
-            Logger.log("ChatGPT limits response: \(limitsJSON)")
-
-            var quotaCandidates: [(source: String, parsed: (remaining: Double?, used: Double?, total: Double?, resetAt: Date?, hasData: Bool))] = []
-
-            if let messageScope = findBestQuotaContainer(in: limitsJSON, preferredKeywords: ["message", "cap"]) {
-                let parsed = parseQuota(from: messageScope)
-                if parsed.hasData {
-                    quotaCandidates.append((source: "message", parsed: parsed))
-                }
-            }
-
-            if let tokenScope = findBestQuotaContainer(in: limitsJSON, preferredKeywords: ["token"]) {
-                let parsed = parseQuota(from: tokenScope)
-                if parsed.hasData {
-                    quotaCandidates.append((source: "token", parsed: parsed))
-                }
-            }
-
-            if quotaCandidates.isEmpty {
-                let parsed = parseQuota(from: limitsJSON)
-                if parsed.hasData {
-                    quotaCandidates.append((source: "root", parsed: parsed))
-                }
-            }
-
-            let sortedCandidates = quotaCandidates.sorted { lhs, rhs in
-                quotaResetPriority(lhs.parsed.resetAt) < quotaResetPriority(rhs.parsed.resetAt)
-            }
-
-            if let primary = sortedCandidates.first {
-                tokenRemaining = primary.parsed.remaining
-                tokenUsed = primary.parsed.used
-                tokenTotal = primary.parsed.total
-                refreshTime = primary.parsed.resetAt
-                hasAnyData = true
-            }
-
-            if sortedCandidates.count > 1 {
-                let secondary = sortedCandidates[1]
-                monthlyRemaining = secondary.parsed.remaining
-                monthlyUsed = secondary.parsed.used
-                monthlyTotal = secondary.parsed.total
-                monthlyRefreshTime = secondary.parsed.resetAt
-                hasAnyData = true
-            }
-        }
-        
-        if let planJSON {
-            Logger.log("ChatGPT plan response: \(planJSON)")
-            let plan = parsePlanInfo(planJSON)
-            if subscriptionPlan == nil {
-                subscriptionPlan = plan.planType
-            }
-            
-            if !hasAnyData, let isActive = plan.isActive {
-                // Keep subscription state, but do not fabricate numeric quota values.
-                if subscriptionPlan == nil {
-                    subscriptionPlan = isActive ? "active" : "free"
-                }
-                if monthlyRefreshTime == nil {
-                    monthlyRefreshTime = plan.renewalDate
-                }
-                hasAnyData = true
-            } else if !hasAnyData, let planType = plan.planType {
-                subscriptionPlan = planType
-                monthlyRefreshTime = plan.renewalDate
-                hasAnyData = true
-            } else if monthlyRefreshTime == nil ||
-                        (refreshTime != nil && datesClose(monthlyRefreshTime, refreshTime)) {
-                monthlyRefreshTime = plan.renewalDate ?? monthlyRefreshTime
-            }
-        }
-        
-        // Fallback: newer tokens already embed chatgpt_plan_type in JWT claims.
-        // This keeps subscription detection working even if Web internal endpoints change.
-        if !hasAnyData, let jwtPlanType = parsePlanTypeFromJWTClaims(jwtClaims) {
-            let normalized = jwtPlanType.lowercased()
-            subscriptionPlan = normalized
-            if monthlyRefreshTime == nil {
-                monthlyRefreshTime = parseJWTExpiry(jwtClaims)
-            }
-            hasAnyData = true
-            Logger.log("ChatGPT: using JWT fallback plan_type=\(normalized)")
-        }
-        
-        guard hasAnyData else {
-            throw APIError.networkError(NSError(
-                domain: "ChatGPT",
-                code: -1,
-                userInfo: [NSLocalizedDescriptionKey: "未能解析ChatGPT订阅/额度信息（accessToken 可能有效，但网页内部接口返回结构已变化）"]
-            ))
-        }
-        
-        return UsageResult(
-            remaining: tokenRemaining,
-            used: tokenUsed,
-            total: tokenTotal,
-            refreshTime: refreshTime,
-            monthlyRemaining: monthlyRemaining,
-            monthlyTotal: monthlyTotal,
-            monthlyUsed: monthlyUsed,
-            monthlyRefreshTime: monthlyRefreshTime,
-            nextRefreshTime: refreshTime ?? monthlyRefreshTime,
-            subscriptionPlan: subscriptionPlan
-        )
-    }
-    
-    private func resolveAccessToken(from rawInput: String) async throws -> String {
-        let input = rawInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !input.isEmpty else { throw APIError.noAPIKey }
-        
-        if looksLikeJWT(input) {
-            return input
-        }
-        
-        let cookieHeader = input.contains("=") ? input : "__Secure-next-auth.session-token=\(input)"
-        
-        for urlString in ["https://chatgpt.com/api/auth/session", "https://chat.openai.com/api/auth/session"] {
-            guard let url = URL(string: urlString) else { continue }
-            var request = URLRequest(url: url)
-            request.httpMethod = "GET"
-            request.timeoutInterval = 15
-            request.setValue(cookieHeader, forHTTPHeaderField: "Cookie")
-            request.setValue("application/json", forHTTPHeaderField: "Accept")
-            
-            do {
-                let (data, response) = try await URLSession.shared.data(for: request)
-                guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { continue }
-                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                   let accessToken = json["accessToken"] as? String,
-                   !accessToken.isEmpty {
-                    Logger.log("ChatGPT: resolved accessToken via session cookie")
-                    return accessToken
-                }
-            } catch {
-                Logger.log("ChatGPT auth/session failed: \(error.localizedDescription)")
-            }
-        }
-        
-        throw APIError.networkError(NSError(
-            domain: "ChatGPT",
-            code: -2,
-            userInfo: [NSLocalizedDescriptionKey: "无法从 session cookie 换取 ChatGPT accessToken"]
-        ))
-    }
-    
-    private func fetchPlanInfo(accessToken: String) async -> [String: Any]? {
-        let urls = [
-            "https://chatgpt.com/backend-api/accounts/check/v4-2023-04-27",
-            "https://chatgpt.com/backend-api/accounts/check",
-            "https://chat.openai.com/backend-api/accounts/check/v4-2023-04-27"
-        ]
-        
-        for urlString in urls {
-            guard let url = URL(string: urlString) else { continue }
-            if let json = await performJSONRequest(url: url, method: "GET", accessToken: accessToken) {
-                return json
-            }
-        }
-        
-        return nil
-    }
-    
-    private func fetchChatRequirements(accessToken: String) async -> [String: Any]? {
-        let urls = [
-            "https://chatgpt.com/backend-api/sentinel/chat-requirements",
-            "https://chat.openai.com/backend-api/sentinel/chat-requirements"
-        ]
-        
-        let body = try? JSONSerialization.data(withJSONObject: [
-            "conversation_mode_kind": "primary_assistant"
-        ])
-        
-        for urlString in urls {
-            guard let url = URL(string: urlString) else { continue }
-            if let json = await performJSONRequest(url: url, method: "POST", accessToken: accessToken, body: body) {
-                return json
-            }
-            if let json = await performJSONRequest(url: url, method: "GET", accessToken: accessToken) {
-                return json
-            }
-        }
-        
-        return nil
-    }
-    
-    private func performJSONRequest(url: URL, method: String, accessToken: String, body: Data? = nil) async -> [String: Any]? {
-        var request = URLRequest(url: url)
-        request.httpMethod = method
-        request.timeoutInterval = 15
-        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(UUID().uuidString.lowercased(), forHTTPHeaderField: "oai-device-id")
-        if let body {
-            request.httpBody = body
-        }
-        
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse else { return nil }
-            Logger.log("ChatGPT \(method) \(url.path): HTTP \(http.statusCode)")
-            guard (200..<300).contains(http.statusCode) else { return nil }
-            
-            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                return json
-            }
-        } catch {
-            Logger.log("ChatGPT request failed \(url.path): \(error.localizedDescription)")
-        }
-        
-        return nil
-    }
-    
-    private func looksLikeJWT(_ value: String) -> Bool {
-        let parts = value.split(separator: ".")
-        return parts.count == 3 && value.count > 40
-    }
-    
-    private func parsePlanInfo(_ json: [String: Any]) -> (isActive: Bool?, renewalDate: Date?, planType: String?) {
-        let isActive = findFirstBool(in: json, keys: [
-            "is_paid_subscription_active",
-            "has_active_subscription",
-            "subscription_active",
-            "is_active"
-        ])
-        
-        let planType = findFirstString(in: json, keys: [
-            "chatgpt_plan_type",
-            "plan_type",
-            "subscription_plan",
-            "tier"
-        ])
-        
-        let renewalDate =
-            findFirstDate(in: json, keys: ["next_billing_date", "renewal_date", "renews_at", "expires_at"]) ??
-            findFirstTimestampDate(in: json, keys: ["next_billing_date_ts", "renews_at_ts", "expires_at_ts"])
-        
-        return (isActive, renewalDate, planType)
-    }
-    
-    private func findBestQuotaContainer(in json: [String: Any], preferredKeywords: [String]) -> [String: Any]? {
-        var best: (score: Int, dict: [String: Any])?
-        walkJSON(json) { dict in
-            let lowerKeys = dict.keys.map { $0.lowercased() }
-            let keywordScore = preferredKeywords.reduce(0) { partial, keyword in
-                partial + lowerKeys.filter { $0.contains(keyword) }.count
-            }
-            let hasQuotaSignals = lowerKeys.contains(where: {
-                $0.contains("remaining") || $0.contains("limit") || $0.contains("cap") || $0 == "used" || $0.contains("reset")
-            })
-            guard hasQuotaSignals else { return }
-            let score = keywordScore + 1
-            if best == nil || score > best!.score {
-                best = (score, dict)
-            }
-        }
-        return best?.dict
-    }
-    
-    private func parseQuota(from dict: [String: Any]) -> (remaining: Double?, used: Double?, total: Double?, resetAt: Date?, hasData: Bool) {
-        let remaining = findFirstNumber(in: dict, keys: [
-            "remaining_tokens", "tokens_remaining", "remaining_token", "remaining",
-            "remaining_messages", "messages_remaining"
-        ])
-        let used = findFirstNumber(in: dict, keys: [
-            "used_tokens", "tokens_used", "used", "consumed", "used_messages", "messages_used"
-        ])
-        let total = findFirstNumber(in: dict, keys: [
-            "max_tokens", "token_limit", "tokens_limit", "limit", "cap", "message_cap",
-            "max_messages", "messages_limit", "total"
-        ])
-        let resetAt =
-            findFirstDate(in: dict, keys: ["reset_at", "resets_at", "next_reset_at"]) ??
-            findFirstTimestampDate(in: dict, keys: ["reset_time", "reset_ts", "reset_at_ts"])
-        
-        let finalUsed: Double?
-        let finalRemaining: Double?
-        if let total, let remaining, used == nil {
-            finalUsed = max(0, total - remaining)
-            finalRemaining = remaining
-        } else if let total, let used, remaining == nil {
-            finalUsed = used
-            finalRemaining = max(0, total - used)
-        } else {
-            finalUsed = used
-            finalRemaining = remaining
-        }
-        
-        let hasData = finalRemaining != nil || finalUsed != nil || total != nil || resetAt != nil
-        return (finalRemaining, finalUsed, total, resetAt, hasData)
-    }
-    
-    private func walkJSON(_ value: Any, visitor: ([String: Any]) -> Void) {
-        if let dict = value as? [String: Any] {
-            visitor(dict)
-            for child in dict.values {
-                walkJSON(child, visitor: visitor)
-            }
-        } else if let array = value as? [Any] {
-            for child in array {
-                walkJSON(child, visitor: visitor)
-            }
-        }
-    }
-    
-    private func findFirstNumber(in root: [String: Any], keys: [String]) -> Double? {
-        let keySet = Set(keys.map { $0.lowercased() })
-        var result: Double?
-        walkJSON(root) { dict in
-            guard result == nil else { return }
-            for (key, value) in dict where keySet.contains(key.lowercased()) {
-                if let parsed = parseNumber(value) {
-                    result = parsed
-                    return
-                }
-            }
-        }
-        return result
-    }
-    
-    private func findFirstBool(in root: [String: Any], keys: [String]) -> Bool? {
-        let keySet = Set(keys.map { $0.lowercased() })
-        var result: Bool?
-        walkJSON(root) { dict in
-            guard result == nil else { return }
-            for (key, value) in dict where keySet.contains(key.lowercased()) {
-                if let boolValue = value as? Bool {
-                    result = boolValue
-                    return
-                }
-                if let numberValue = value as? NSNumber {
-                    result = numberValue.boolValue
-                    return
-                }
-                if let stringValue = value as? String {
-                    let lower = stringValue.lowercased()
-                    if ["true", "1", "yes", "active"].contains(lower) {
-                        result = true
-                        return
-                    }
-                    if ["false", "0", "no", "inactive"].contains(lower) {
-                        result = false
-                        return
-                    }
-                }
-            }
-        }
-        return result
-    }
-    
-    private func findFirstString(in root: [String: Any], keys: [String]) -> String? {
-        let keySet = Set(keys.map { $0.lowercased() })
-        var result: String?
-        walkJSON(root) { dict in
-            guard result == nil else { return }
-            for (key, value) in dict where keySet.contains(key.lowercased()) {
-                if let stringValue = value as? String, !stringValue.isEmpty {
-                    result = stringValue
-                    return
-                }
-            }
-        }
-        return result
-    }
-    
-    private func findFirstDate(in root: [String: Any], keys: [String]) -> Date? {
-        let keySet = Set(keys.map { $0.lowercased() })
-        let iso = ISO8601DateFormatter()
-        var result: Date?
-        walkJSON(root) { dict in
-            guard result == nil else { return }
-            for (key, value) in dict where keySet.contains(key.lowercased()) {
-                guard let stringValue = value as? String else { continue }
-                if let date = iso.date(from: stringValue) {
-                    result = date
-                    return
-                }
-                let formatter = DateFormatter()
-                formatter.locale = Locale(identifier: "en_US_POSIX")
-                formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
-                if let date = formatter.date(from: stringValue) {
-                    result = date
-                    return
-                }
-            }
-        }
-        return result
-    }
-    
-    private func findFirstTimestampDate(in root: [String: Any], keys: [String]) -> Date? {
-        let keySet = Set(keys.map { $0.lowercased() })
-        var result: Date?
-        walkJSON(root) { dict in
-            guard result == nil else { return }
-            for (key, value) in dict where keySet.contains(key.lowercased()) {
-                guard let ts = parseNumber(value), ts > 0 else { continue }
-                result = ts > 10_000_000_000 ? Date(timeIntervalSince1970: ts / 1000) : Date(timeIntervalSince1970: ts)
-                return
-            }
-        }
-        return result
-    }
-
-    private func quotaResetPriority(_ date: Date?) -> TimeInterval {
-        guard let date else { return .greatestFiniteMagnitude }
-        let now = Date()
-        let delta = date.timeIntervalSince(now)
-        if delta >= 0 {
-            return delta
-        }
-        return abs(delta) + 86_400
-    }
-
-    private func datesClose(_ lhs: Date?, _ rhs: Date?) -> Bool {
-        guard let lhs, let rhs else { return false }
-        return abs(lhs.timeIntervalSince(rhs)) < 60
-    }
-    
-    private func decodeJWTPayload(_ token: String) -> [String: Any]? {
-        let parts = token.split(separator: ".")
-        guard parts.count == 3 else { return nil }
-        var base64 = String(parts[1])
-            .replacingOccurrences(of: "-", with: "+")
-            .replacingOccurrences(of: "_", with: "/")
-        while base64.count % 4 != 0 {
-            base64.append("=")
-        }
-        guard let data = Data(base64Encoded: base64),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return nil
-        }
-        return json
-    }
-    
-    private func parsePlanTypeFromJWTClaims(_ claims: [String: Any]?) -> String? {
-        guard let claims else { return nil }
-        
-        if let auth = claims["https://api.openai.com/auth"] as? [String: Any],
-           let planType = auth["chatgpt_plan_type"] as? String,
-           !planType.isEmpty {
-            return planType
-        }
-        
-        return findFirstString(in: claims, keys: ["chatgpt_plan_type", "plan_type"])
-    }
-    
-    private func parseJWTExpiry(_ claims: [String: Any]?) -> Date? {
-        guard let claims else { return nil }
-        if let exp = parseNumber(claims["exp"]), exp > 0 {
-            return Date(timeIntervalSince1970: exp)
-        }
-        return nil
-    }
-}
-
 // MARK: - KIMI Service
 
 final class KIMIService: UsageService {
     let provider: APIProvider = .kimi
-    
+
     func fetchUsage(apiKey: String) async throws -> UsageResult {
-        guard !apiKey.isEmpty else {
-            throw APIError.noAPIKey
-        }
+        guard !apiKey.isEmpty else { throw APIError.noAPIKey }
 
-        try Task.checkCancellation()
-        var preferredAuthError: APIError?
-
-        for endpointKind in preferredOfficialEndpoints(for: apiKey) {
+        var lastError: APIError?
+        for endpoint in ["https://api.moonshot.ai/v1/users/me/balance", "https://api.moonshot.cn/v1/users/me/balance"] {
             try Task.checkCancellation()
             do {
-                let officialResult: UsageResult?
-                switch endpointKind {
-                case .kimiCode:
-                    officialResult = try await fetchKimiCodeUsage(apiKey: apiKey)
-                case .moonshotOpenPlatform:
-                    officialResult = try await fetchMoonshotOpenPlatformBalance(apiKey: apiKey)
-                }
-
-                if let officialResult, hasUsagePayload(officialResult) {
-                    Logger.log("KIMI: Using official \(endpointKind.logLabel) endpoint")
-                    return officialResult
-                }
+                return try await fetchBalance(apiKey: apiKey, endpoint: endpoint)
             } catch let error as APIError {
-                if preferredAuthError == nil, isAuthError(error) {
-                    preferredAuthError = error
-                }
-                Logger.log("KIMI official \(endpointKind.logLabel) failed: \(error.localizedDescription)")
+                lastError = error
+                if Self.isAuthenticationError(error) { throw error }
+                Logger.log("KIMI official balance endpoint failed (\(endpoint)): \(error.localizedDescription)")
             } catch {
-                Logger.log("KIMI official \(endpointKind.logLabel) failed: \(error.localizedDescription)")
+                lastError = APIError.networkError(error)
+                Logger.log("KIMI official balance endpoint failed (\(endpoint)): \(error.localizedDescription)")
             }
-        }
-        
-        try Task.checkCancellation()
-        
-        // Legacy fallback probing (kept for compatibility)
-        let baseURL = "https://api.moonshot.cn"
-        
-        // Try to fetch wallet/balance info
-        let walletInfo = try? await fetchWalletInfo(apiKey: apiKey, baseURL: baseURL)
-        
-        var remaining: Double?
-        var used: Double?
-        var total: Double?
-        var refreshTime: Date?
-        
-        if let wallet = walletInfo {
-            Logger.log("KIMI: Got wallet info: \(wallet)")
-            
-            // Parse available balance (current quota)
-            if let data = wallet["data"] as? [String: Any] {
-                // Available balance (remaining)
-                remaining = parseNumber(data["available_balance"]) ?? parseNumber(data["balance"])
-                
-                // Total vouchers (total quota granted)
-                total = parseNumber(data["total_balance"]) ?? parseNumber(data["total_vouchers"])
-                
-                // Used amount
-                used = parseNumber(data["used_balance"]) ?? parseNumber(data["consumed"])
-                
-                // If we have remaining and total, calculate used if not provided
-                if let r = remaining, let t = total, used == nil {
-                    used = max(0, t - r)
-                }
-                
-                // Parse refresh time if available
-                if let refreshAt = data["refresh_at"] as? String {
-                    let formatter = ISO8601DateFormatter()
-                    refreshTime = formatter.date(from: refreshAt)
-                } else if let refreshTs = parseNumber(data["refresh_timestamp"]) {
-                    refreshTime = Date(timeIntervalSince1970: refreshTs / 1000)
-                }
-            }
-            
-            // Try alternative response structure
-            if remaining == nil && total == nil {
-                if let balance = parseNumber(wallet["balance"]) {
-                    remaining = balance
-                }
-                if let quota = parseNumber(wallet["quota"]) {
-                    total = quota
-                }
-                if let consumed = parseNumber(wallet["consumed"]) {
-                    used = consumed
-                }
-            }
-        }
-        
-        // Try to fetch monthly usage stats
-        if let monthlyStats = try? await fetchMonthlyStats(apiKey: apiKey, baseURL: baseURL) {
-            Logger.log("KIMI: Got monthly stats: \(monthlyStats)")
-            
-            // Use monthly stats to supplement missing data
-            if used == nil {
-                used = parseNumber(monthlyStats["total_tokens"]) ?? parseNumber(monthlyStats["total_usage"])
-            }
-            
-            // Parse monthly quota/limit
-            if total == nil {
-                total = parseNumber(monthlyStats["monthly_quota"]) ?? parseNumber(monthlyStats["monthly_limit"])
-            }
-            
-            // Calculate remaining
-            if let t = total, let u = used {
-                remaining = max(0, t - u)
-            }
-            
-            // Parse monthly reset time
-            if refreshTime == nil {
-                if let resetAt = monthlyStats["monthly_reset_at"] as? String {
-                    let formatter = ISO8601DateFormatter()
-                    refreshTime = formatter.date(from: resetAt)
-                } else if let resetTs = parseNumber(monthlyStats["reset_timestamp"]) {
-                    refreshTime = Date(timeIntervalSince1970: resetTs / 1000)
-                }
-            }
-        }
-        
-        Logger.log("KIMI Final Result: remaining=\(String(describing: remaining)), used=\(String(describing: used)), total=\(String(describing: total)), refreshTime=\(String(describing: refreshTime))")
-
-        let legacyResult = UsageResult(remaining: remaining, used: used, total: total, refreshTime: refreshTime)
-        if hasUsagePayload(legacyResult) {
-            return legacyResult
         }
 
-        if let preferredAuthError {
-            throw preferredAuthError
-        }
-
-        throw APIError.networkError(
-            NSError(
-                domain: "KIMI",
-                code: -1,
-                userInfo: [NSLocalizedDescriptionKey: "无法获取 KIMI 用量或余额信息"]
-            )
+        throw lastError ?? APIError.networkError(
+            NSError(domain: "KIMI", code: -1, userInfo: [NSLocalizedDescriptionKey: "无法获取 KIMI 官方余额信息"])
         )
     }
 
-    private enum OfficialEndpointKind {
-        case kimiCode
-        case moonshotOpenPlatform
+    private func fetchBalance(apiKey: String, endpoint: String) async throws -> UsageResult {
+        guard let url = URL(string: endpoint) else { throw APIError.invalidURL }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 15
 
-        var logLabel: String {
-            switch self {
-            case .kimiCode:
-                return "Kimi Code"
-            case .moonshotOpenPlatform:
-                return "Moonshot Open Platform"
-            }
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+        Logger.log("KIMI Balance API \(endpoint): HTTP \(httpResponse.statusCode)")
+
+        if httpResponse.statusCode == 401 || httpResponse.statusCode == 403 {
+            throw APIError.httpErrorWithMessage(httpResponse.statusCode, "KIMI API Key 无效或无余额查询权限")
         }
-    }
+        guard httpResponse.statusCode == 200 else { throw APIError.httpError(httpResponse.statusCode) }
 
-    private func preferredOfficialEndpoints(for apiKey: String) -> [OfficialEndpointKind] {
-        if isKimiCodeAPIKey(apiKey) {
-            return [.kimiCode, .moonshotOpenPlatform]
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let dataObject = json["data"] as? [String: Any] else {
+            throw APIError.decodingError(NSError(domain: "KIMI", code: -1, userInfo: [NSLocalizedDescriptionKey: "余额接口返回结构异常"]))
         }
-        return [.moonshotOpenPlatform, .kimiCode]
+
+        let available = parseNumber(dataObject["available_balance"]) ?? parseNumber(dataObject["balance"])
+        let voucher = parseNumber(dataObject["voucher_balance"]) ?? 0
+        let cash = parseNumber(dataObject["cash_balance"]) ?? 0
+        guard let remaining = available else {
+            throw APIError.decodingError(NSError(domain: "KIMI", code: -1, userInfo: [NSLocalizedDescriptionKey: "余额接口未返回 available_balance"] ))
+        }
+
+        return UsageResult(
+            remaining: remaining,
+            used: nil,
+            total: nil,
+            refreshTime: nil,
+            balanceDetails: [CurrencyBalance(currency: "CNY", total: remaining, granted: voucher, toppedUp: cash)]
+        )
     }
 
-    private func isKimiCodeAPIKey(_ apiKey: String) -> Bool {
-        apiKey.hasPrefix("sk-kimi-")
-    }
-
-    private func hasUsagePayload(_ result: UsageResult) -> Bool {
-        result.remaining != nil ||
-        result.used != nil ||
-        result.total != nil ||
-        result.refreshTime != nil ||
-        result.monthlyRemaining != nil ||
-        result.monthlyUsed != nil ||
-        result.monthlyTotal != nil ||
-        result.monthlyRefreshTime != nil ||
-        result.nextRefreshTime != nil ||
-        result.subscriptionPlan != nil
-    }
-
-    private func isAuthError(_ error: APIError) -> Bool {
+    private static func isAuthenticationError(_ error: APIError) -> Bool {
         switch error {
-        case .httpError(let code):
-            return code == 401 || code == 403
-        case .httpErrorWithMessage(let code, _):
+        case .httpError(let code), .httpErrorWithMessage(let code, _):
             return code == 401 || code == 403
         default:
             return false
         }
     }
+}
 
-    private func fetchKimiCodeUsage(apiKey: String) async throws -> UsageResult? {
-        let json = try await fetchKIMIJSON(
-            apiKey: apiKey,
-            urlString: "https://api.kimi.com/coding/v1/usages"
-        )
-        Logger.log("KIMI Code /usages Response: \(json)")
+// MARK: - Codex Service
 
-        let user = json["user"] as? [String: Any]
-        let membership = user?["membership"] as? [String: Any]
-        let membershipLevel = (membership?["level"] as? String).flatMap(normalizedMembershipLevel)
+final class CodexService: UsageService {
+    let provider: APIProvider = .codex
 
-        let usage = json["usage"] as? [String: Any]
-        let total = parseNumber(usage?["limit"])
-        var used = parseNumber(usage?["used"])
-        var remaining = parseNumber(usage?["remaining"])
-        var primaryCycleIsPercentage = false
-
-        if total == nil, used == nil, remaining == nil {
-            let usedPercent = parsePercentageValue(
-                in: usage,
-                keys: [
-                    "used_percent",
-                    "usage_percent",
-                    "usage_percentage",
-                    "used_percentage",
-                    "usage_ratio"
-                ]
-            )
-            let remainingPercent = parsePercentageValue(
-                in: usage,
-                keys: [
-                    "remaining_percent",
-                    "remain_percent",
-                    "remaining_percentage",
-                    "remain_ratio"
-                ]
-            )
-
-            if let usedPercent = normalizePercent(usedPercent ?? (remainingPercent != nil ? 100 - (remainingPercent ?? 0) : nil)),
-               let remainingPercent = normalizePercent(remainingPercent ?? (100 - usedPercent)) {
-                used = usedPercent
-                remaining = remainingPercent
-                primaryCycleIsPercentage = true
-            }
-        }
-
-        if used == nil, let t = total, let r = remaining {
-            used = max(0, t - r)
-        }
-        if remaining == nil, let t = total, let u = used {
-            remaining = max(0, t - u)
-        }
-
-        let refreshTime = parseKIMIDate(usage?["resetTime"] ?? usage?["reset_time"])
-
-        let limitSnapshots = parseKimiLimitSnapshots(from: json["limits"])
-        let selectedLimitSnapshot = pickNearestUpcomingLimitSnapshot(limitSnapshots)
-
-        let limitResetCandidates: [Date] = limitSnapshots.compactMap(\.resetAt)
-        let now = Date()
-        let futureCandidates = limitResetCandidates.filter { $0.timeIntervalSince(now) > -60 }
-        let sortedCandidates = (futureCandidates.isEmpty ? limitResetCandidates : futureCandidates).sorted()
-        let nextRefreshTime = sortedCandidates.first(where: { candidate in
-            guard let refreshTime else { return true }
-            return abs(candidate.timeIntervalSince(refreshTime)) > 60
-        }) ?? sortedCandidates.first
-
-        return UsageResult(
-            remaining: remaining,
-            used: used,
-            total: total,
-            refreshTime: refreshTime,
-            monthlyRemaining: selectedLimitSnapshot?.remaining,
-            monthlyTotal: selectedLimitSnapshot?.total,
-            monthlyUsed: selectedLimitSnapshot?.used,
-            monthlyRefreshTime: selectedLimitSnapshot?.resetAt,
-            nextRefreshTime: selectedLimitSnapshot?.resetAt ?? nextRefreshTime,
-            subscriptionPlan: membershipLevel,
-            primaryCycleIsPercentage: primaryCycleIsPercentage ? true : nil,
-            secondaryCycleIsPercentage: selectedLimitSnapshot?.isPercentageOnly == true ? true : nil
-        )
+    func fetchUsage(apiKey: String) async throws -> UsageResult {
+        try Task.checkCancellation()
+        return try await fetchLiveUsage()
     }
 
-    private func fetchMoonshotOpenPlatformBalance(apiKey: String) async throws -> UsageResult? {
-        let baseURLs = [
-            "https://api.moonshot.cn",
-            "https://api.moonshot.ai"
-        ]
-
-        var lastError: APIError?
-
-        for baseURL in baseURLs {
-            do {
-                let json = try await fetchKIMIJSON(
-                    apiKey: apiKey,
-                    urlString: "\(baseURL)/v1/users/me/balance"
-                )
-                Logger.log("KIMI Moonshot /users/me/balance Response (\(baseURL)): \(json)")
-
-                guard let data = json["data"] as? [String: Any] else {
-                    continue
-                }
-
-                let available = parseNumber(data["available_balance"]) ?? parseNumber(data["balance"])
-                let voucher = parseNumber(data["voucher_balance"])
-                let cash = parseNumber(data["cash_balance"])
-
-                // Open platform balance endpoint exposes remaining balance only (CNY), not token used/total.
-                return UsageResult(
-                    remaining: available,
-                    used: nil,
-                    total: nil,
-                    refreshTime: nil,
-                    monthlyRemaining: voucher,
-                    monthlyTotal: nil,
-                    monthlyUsed: nil,
-                    monthlyRefreshTime: nil,
-                    nextRefreshTime: nil,
-                    subscriptionPlan: cash != nil ? "Open Platform" : nil
-                )
-            } catch let error as APIError {
-                lastError = error
-                // Try the alternate region host on 404/5xx/network-ish API errors.
-                switch error {
-                case .httpError(let code) where code == 404 || code >= 500:
-                    continue
-                case .httpErrorWithMessage(let code, _) where code == 404 || code >= 500:
-                    continue
-                default:
-                    throw error
-                }
-            }
-        }
-
-        if let lastError {
-            throw lastError
-        }
-        return nil
-    }
-
-    private func fetchKIMIJSON(apiKey: String, urlString: String) async throws -> [String: Any] {
-        guard let url = URL(string: urlString) else {
+    private func fetchLiveUsage() async throws -> UsageResult {
+        let accessToken = try readCodexAccessToken()
+        guard let url = URL(string: "https://chatgpt.com/backend-api/wham/usage") else {
             throw APIError.invalidURL
         }
 
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 10
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("QuotaPulse/1.0", forHTTPHeaderField: "User-Agent")
+        request.timeoutInterval = 15
 
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+            Logger.log("Codex usage API: HTTP \(httpResponse.statusCode)")
 
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw APIError.invalidResponse
+            if httpResponse.statusCode == 401 || httpResponse.statusCode == 403 {
+                throw APIError.httpErrorWithMessage(httpResponse.statusCode, "Codex 登录已失效，请在终端重新运行 codex login")
             }
+            guard httpResponse.statusCode == 200 else { throw APIError.httpError(httpResponse.statusCode) }
 
-            guard (200...299).contains(httpResponse.statusCode) else {
-                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                    let errorMessage =
-                        ((json["error"] as? [String: Any])?["message"] as? String) ??
-                        (json["message"] as? String)
-                    if let errorMessage {
-                        throw APIError.httpErrorWithMessage(httpResponse.statusCode, errorMessage)
-                    }
-                }
-                throw APIError.httpError(httpResponse.statusCode)
-            }
-
-            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                throw APIError.invalidResponse
-            }
-            return json
+            return try Self.parseWhamUsageResponse(data)
         } catch let error as APIError {
             throw error
         } catch {
@@ -1616,283 +623,154 @@ final class KIMIService: UsageService {
         }
     }
 
-    private func parseKIMIDate(_ raw: Any?) -> Date? {
-        guard let raw else { return nil }
-        let value: String
-        if let string = raw as? String {
-            value = string
-        } else if let number = parseNumber(raw) {
-            // Milliseconds are commonly used in some endpoints.
-            if number > 10_000_000_000 {
-                return Date(timeIntervalSince1970: number / 1000)
+    private func readCodexAccessToken() throws -> String {
+        let authURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex/auth.json")
+        guard let data = try? Data(contentsOf: authURL),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let tokens = json["tokens"] as? [String: Any],
+              let accessToken = tokens["access_token"] as? String,
+              !accessToken.isEmpty else {
+            throw APIError.httpErrorWithMessage(404, "未找到 Codex 登录凭证；请先在终端运行 codex login")
+        }
+        return accessToken
+    }
+
+    static func parseWhamUsageResponse(_ data: Data) throws -> UsageResult {
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let rateLimit = json["rate_limit"] as? [String: Any],
+              let primaryWindow = rateLimit["primary_window"] as? [String: Any] else {
+            throw APIError.decodingError(NSError(domain: "Codex", code: -1, userInfo: [NSLocalizedDescriptionKey: "Codex 用量接口返回结构异常"]))
+        }
+
+        let secondaryWindow = rateLimit["secondary_window"] as? [String: Any]
+        guard let parsed = parseRateLimitWindows(
+            primary: primaryWindow,
+            secondary: secondaryWindow,
+            planType: json["plan_type"] as? String
+        ) else {
+            throw APIError.decodingError(NSError(domain: "Codex", code: -1, userInfo: [NSLocalizedDescriptionKey: "Codex 用量接口未返回额度字段"]))
+        }
+        return parsed
+    }
+
+    static func parseResponses(_ output: String) throws -> UsageResult {
+        var lastErrorMessage: String?
+
+        for line in output.split(whereSeparator: \.isNewline).reversed() {
+            guard let data = line.data(using: .utf8),
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                continue
             }
-            return Date(timeIntervalSince1970: number)
-        } else {
+
+            if let error = object["error"] as? [String: Any],
+               let message = error["message"] as? String {
+                lastErrorMessage = message
+                continue
+            }
+
+            if let rateLimits = findRateLimits(in: object),
+               let parsed = parseSessionRateLimits(rateLimits) {
+                return parsed
+            }
+        }
+
+        if let lastErrorMessage {
+            throw APIError.httpErrorWithMessage(502, lastErrorMessage)
+        }
+
+        throw APIError.httpErrorWithMessage(
+            404,
+            "未找到 Codex 本机用量记录；请先在终端运行 codex login，并至少完成一次 Codex 会话后再刷新。"
+        )
+    }
+
+    private static func findRateLimits(in value: Any) -> [String: Any]? {
+        if let dictionary = value as? [String: Any] {
+            if let direct = dictionary["rate_limits"] as? [String: Any] {
+                return direct
+            }
+            if let direct = dictionary["rateLimits"] as? [String: Any] {
+                return direct
+            }
+            for nested in dictionary.values {
+                if let found = findRateLimits(in: nested) {
+                    return found
+                }
+            }
+        } else if let array = value as? [Any] {
+            for nested in array {
+                if let found = findRateLimits(in: nested) {
+                    return found
+                }
+            }
+        }
+        return nil
+    }
+
+    private static func parseSessionRateLimits(_ rateLimits: [String: Any]) -> UsageResult? {
+        guard let primary = rateLimits["primary"] as? [String: Any] else { return nil }
+        let secondary = rateLimits["secondary"] as? [String: Any]
+
+        return parseRateLimitWindows(
+            primary: primary,
+            secondary: secondary,
+            planType: (rateLimits["plan_type"] as? String) ?? (rateLimits["planType"] as? String)
+        )
+    }
+
+    private static func parseRateLimitWindows(
+        primary: [String: Any],
+        secondary: [String: Any]?,
+        planType: String?
+    ) -> UsageResult? {
+        let primaryUsed = parseNumber(primary["used_percent"] ?? primary["usedPercent"])
+        let primaryReset = parseResetDate(
+            primary["reset_at"] ?? primary["resets_at"] ?? primary["resetsAt"],
+            resetAfter: primary["reset_after_seconds"] ?? primary["resetAfterSeconds"]
+        )
+        let secondaryUsed = secondary.flatMap { parseNumber($0["used_percent"] ?? $0["usedPercent"]) }
+        let secondaryReset = secondary.flatMap {
+            parseResetDate(
+                $0["reset_at"] ?? $0["resets_at"] ?? $0["resetsAt"],
+                resetAfter: $0["reset_after_seconds"] ?? $0["resetAfterSeconds"]
+            )
+        }
+
+        guard primaryUsed != nil || secondaryUsed != nil || primaryReset != nil || secondaryReset != nil else {
             return nil
         }
 
-        let fractional = ISO8601DateFormatter()
-        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = fractional.date(from: value) {
-            return date
-        }
-
-        let basic = ISO8601DateFormatter()
-        return basic.date(from: value)
+        return UsageResult(
+            remaining: primaryUsed.map { max(0, 100 - $0) },
+            used: primaryUsed,
+            total: primaryUsed == nil ? nil : 100,
+            refreshTime: primaryReset,
+            monthlyRemaining: secondaryUsed.map { max(0, 100 - $0) },
+            monthlyTotal: secondaryUsed == nil ? nil : 100,
+            monthlyUsed: secondaryUsed,
+            monthlyRefreshTime: secondaryReset,
+            subscriptionPlan: planType,
+            primaryCycleIsPercentage: true,
+            secondaryCycleIsPercentage: true
+        )
     }
 
-    private struct KimiLimitSnapshot {
-        var remaining: Double?
-        var used: Double?
-        var total: Double?
-        var resetAt: Date?
-        var isPercentageOnly: Bool = false
-
-        var hasAnyData: Bool {
-            remaining != nil || used != nil || total != nil || resetAt != nil
+    private static func parseResetDate(_ value: Any?, resetAfter: Any? = nil) -> Date? {
+        if let timestamp = parseNumber(value), timestamp > 0 {
+            return Date(timeIntervalSince1970: timestamp)
         }
-    }
-
-    private func parseKimiLimitSnapshots(from raw: Any?) -> [KimiLimitSnapshot] {
-        guard let limits = raw as? [[String: Any]] else {
-            return []
-        }
-
-        var snapshots: [KimiLimitSnapshot] = []
-        for limit in limits {
-            let detail = (limit["detail"] as? [String: Any]) ?? limit
-
-            let total = parseNumber(detail["limit"]) ??
-                parseNumber(detail["total"]) ??
-                parseNumber(detail["max"]) ??
-                parseNumber(detail["quota"])
-            var remaining = parseNumber(detail["remaining"]) ??
-                parseNumber(detail["remain"]) ??
-                parseNumber(detail["available"])
-            var used = parseNumber(detail["used"]) ??
-                parseNumber(detail["consumed"])
-            var normalizedTotal = total
-            var isPercentageOnly = false
-
-            if normalizedTotal == nil {
-                let usedPercent =
-                    parsePercentageValue(in: detail, keys: [
-                        "used_percent",
-                        "usage_percent",
-                        "used_percentage",
-                        "usage_percentage",
-                        "usage_ratio"
-                    ]) ??
-                    parsePercentageValue(in: limit, keys: [
-                        "used_percent",
-                        "usage_percent",
-                        "used_percentage",
-                        "usage_percentage",
-                        "usage_ratio"
-                    ])
-                let remainingPercent =
-                    parsePercentageValue(in: detail, keys: [
-                        "remaining_percent",
-                        "remain_percent",
-                        "remaining_percentage",
-                        "remain_ratio"
-                    ]) ??
-                    parsePercentageValue(in: limit, keys: [
-                        "remaining_percent",
-                        "remain_percent",
-                        "remaining_percentage",
-                        "remain_ratio"
-                    ])
-
-                if let normalizedUsed = normalizePercent(usedPercent ?? (remainingPercent != nil ? 100 - (remainingPercent ?? 0) : nil)),
-                   let normalizedRemaining = normalizePercent(remainingPercent ?? (100 - normalizedUsed)) {
-                    used = normalizedUsed
-                    remaining = normalizedRemaining
-                    normalizedTotal = 100
-                    isPercentageOnly = true
-                }
-            }
-
-            if used == nil, let normalizedTotal, let remaining {
-                used = max(0, normalizedTotal - remaining)
-            }
-            if remaining == nil, let normalizedTotal, let used {
-                remaining = max(0, normalizedTotal - used)
-            }
-
-            let resetAt =
-                parseKIMIDate(detail["resetTime"] ?? detail["reset_time"] ?? detail["nextResetTime"] ?? detail["next_reset_time"]) ??
-                parseKIMIDate(limit["resetTime"] ?? limit["reset_time"] ?? limit["nextResetTime"] ?? limit["next_reset_time"])
-
-            let snapshot = KimiLimitSnapshot(
-                remaining: remaining,
-                used: used,
-                total: normalizedTotal,
-                resetAt: resetAt,
-                isPercentageOnly: isPercentageOnly
-            )
-
-            if snapshot.hasAnyData {
-                snapshots.append(snapshot)
-            }
-        }
-
-        return snapshots
-    }
-
-    private func pickNearestUpcomingLimitSnapshot(_ snapshots: [KimiLimitSnapshot]) -> KimiLimitSnapshot? {
-        let now = Date()
-        let withReset = snapshots.filter { $0.resetAt != nil }
-        let source = withReset.isEmpty ? snapshots : withReset
-
-        return source.min { lhs, rhs in
-            let lhsPriority = quotaResetPriority(lhs.resetAt, now: now)
-            let rhsPriority = quotaResetPriority(rhs.resetAt, now: now)
-            if lhsPriority != rhsPriority {
-                return lhsPriority < rhsPriority
-            }
-            return quotaCoverageScore(lhs) > quotaCoverageScore(rhs)
-        }
-    }
-
-    private func quotaCoverageScore(_ snapshot: KimiLimitSnapshot) -> Int {
-        var score = 0
-        if snapshot.total != nil { score += 2 }
-        if snapshot.used != nil { score += 2 }
-        if snapshot.remaining != nil { score += 1 }
-        return score
-    }
-
-    private func quotaResetPriority(_ date: Date?, now: Date) -> TimeInterval {
-        guard let date else { return .greatestFiniteMagnitude }
-        let delta = date.timeIntervalSince(now)
-        if delta >= 0 {
-            return delta
-        }
-        return abs(delta) + 86_400
-    }
-
-    private func parsePercentageValue(in dict: [String: Any]?, keys: [String]) -> Double? {
-        guard let dict else { return nil }
-        let normalizedKeys = Set(keys.map { $0.lowercased() })
-
-        for (key, value) in dict where normalizedKeys.contains(key.lowercased()) {
-            if let number = parseNumber(value) {
-                return normalizePercent(number)
-            }
-            if let string = value as? String {
-                let stripped = string.replacingOccurrences(of: "%", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
-                if let number = Double(stripped) {
-                    return normalizePercent(number)
-                }
-            }
+        if let seconds = parseNumber(resetAfter), seconds > 0 {
+            return Date().addingTimeInterval(seconds)
         }
         return nil
     }
+}
 
-    private func normalizePercent(_ value: Double?) -> Double? {
-        guard let value else { return nil }
-        return min(max(value, 0), 100)
-    }
+struct UnsupportedUsageService: UsageService {
+    let provider: APIProvider
 
-    private func normalizedMembershipLevel(_ raw: String) -> String {
-        raw
-            .replacingOccurrences(of: "LEVEL_", with: "")
-            .replacingOccurrences(of: "_", with: " ")
-            .capitalized
-    }
-    
-    private func fetchWalletInfo(apiKey: String, baseURL: String) async throws -> [String: Any]? {
-        // Possible endpoints for wallet/balance info
-        let possibleEndpoints = [
-            "/v1/wallet",
-            "/v1/balance",
-            "/v1/user/wallet",
-            "/v1/account/balance",
-            "/v1/quota"
-        ]
-        
-        for endpoint in possibleEndpoints {
-            let urlString = "\(baseURL)\(endpoint)"
-            
-            guard let url = URL(string: urlString) else { continue }
-            
-            var request = URLRequest(url: url)
-            request.httpMethod = "GET"
-            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.timeoutInterval = 10
-            
-            do {
-                let (data, response) = try await URLSession.shared.data(for: request)
-                
-                guard let httpResponse = response as? HTTPURLResponse else { continue }
-                
-                Logger.log("KIMI \(endpoint): HTTP \(httpResponse.statusCode)")
-                
-                if httpResponse.statusCode == 200 {
-                    if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                        Logger.log("KIMI \(endpoint) Response: \(json)")
-                        return json
-                    }
-                }
-            } catch {
-                Logger.log("KIMI \(endpoint) failed: \(error.localizedDescription)")
-            }
-        }
-        
-        return nil
-    }
-    
-    private func fetchMonthlyStats(apiKey: String, baseURL: String) async throws -> [String: Any]? {
-        // Get current month stats
-        let calendar = Calendar.current
-        let now = Date()
-        let startOfMonth = calendar.date(from: calendar.dateComponents([.year, .month], from: now))!
-        
-        let dateFormatter = DateFormatter()
-        dateFormatter.dateFormat = "yyyy-MM-dd"
-        let startDate = dateFormatter.string(from: startOfMonth)
-        
-        // Possible endpoints for usage stats
-        let possibleEndpoints = [
-            "/v1/usage",
-            "/v1/stats",
-            "/v1/user/usage",
-            "/v1/account/usage?start_date=\(startDate)",
-            "/v1/billing/usage"
-        ]
-        
-        for endpoint in possibleEndpoints {
-            let urlString = "\(baseURL)\(endpoint)"
-            
-            guard let url = URL(string: urlString) else { continue }
-            
-            var request = URLRequest(url: url)
-            request.httpMethod = "GET"
-            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.timeoutInterval = 10
-            
-            do {
-                let (data, response) = try await URLSession.shared.data(for: request)
-                
-                guard let httpResponse = response as? HTTPURLResponse else { continue }
-                
-                Logger.log("KIMI \(endpoint): HTTP \(httpResponse.statusCode)")
-                
-                if httpResponse.statusCode == 200 {
-                    if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                        Logger.log("KIMI \(endpoint) Response: \(json)")
-                        return json
-                    }
-                }
-            } catch {
-                Logger.log("KIMI \(endpoint) failed: \(error.localizedDescription)")
-            }
-        }
-        
-        return nil
+    func fetchUsage(apiKey: String) async throws -> UsageResult {
+        throw APIError.httpErrorWithMessage(410, "该监控方案已删除：没有稳定的官方 API 接口支撑")
     }
 }
 
@@ -1900,15 +778,17 @@ func getService(for provider: APIProvider) -> UsageService {
     switch provider {
     case .miniMax:
         return MiniMaxService()
-    case .glm:
-        return GLMService()
     case .tavily:
         return TavilyService()
     case .openAI:
         return OpenAIService()
-    case .chatGPT:
-        return ChatGPTService()
     case .kimi:
         return KIMIService()
+    case .deepSeek:
+        return DeepSeekService()
+    case .codex:
+        return CodexService()
+    case .glm, .chatGPT:
+        return UnsupportedUsageService(provider: provider)
     }
 }

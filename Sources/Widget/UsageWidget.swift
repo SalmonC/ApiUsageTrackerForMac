@@ -84,23 +84,6 @@ private enum WidgetUsageDataLoader {
                 monthlyRefreshTime: nil,
                 nextRefreshTime: nil,
                 subscriptionPlan: nil
-            ),
-            UsageData(
-                accountId: UUID(uuidString: "33333333-3333-3333-3333-333333333333") ?? UUID(),
-                accountName: "ChatGPT 订阅",
-                provider: .chatGPT,
-                tokenRemaining: nil,
-                tokenUsed: nil,
-                tokenTotal: nil,
-                refreshTime: nil,
-                lastUpdated: now,
-                errorMessage: nil,
-                monthlyRemaining: nil,
-                monthlyTotal: nil,
-                monthlyUsed: nil,
-                monthlyRefreshTime: nil,
-                nextRefreshTime: nil,
-                subscriptionPlan: "plus"
             )
         ]
     }
@@ -338,9 +321,6 @@ private struct CompactUsageCard: View {
             if data.errorMessage != nil {
                 Text("异常")
                     .foregroundStyle(.orange)
-            } else if let plan = data.displaySubscriptionPlan, data.provider == .chatGPT {
-                Text(plan)
-                    .foregroundStyle(.green)
             } else if let progressText {
                 Text(progressText)
                     .foregroundStyle(progressColor)
@@ -358,13 +338,17 @@ private struct CompactUsageCard: View {
     }
     
     private var primaryLabel: String {
+        if data.provider == .deepSeek, !data.currencyBalances.isEmpty { return "账户余额" }
+        if (data.provider == .kimi || data.provider == .openAI), !data.currencyBalances.isEmpty { return "账户余额" }
         if data.tokenRemaining != nil { return "剩余额度" }
         if data.monthlyRemaining != nil { return "月度剩余" }
-        if data.provider == .chatGPT, let plan = data.displaySubscriptionPlan { return "订阅计划：\(plan)" }
         return "暂无额度数值"
     }
     
     private var primaryValue: String {
+        if (data.provider == .deepSeek || data.provider == .kimi || data.provider == .openAI), !data.currencyBalances.isEmpty {
+            return data.currencyBalances.map(formatWidgetBalance).joined(separator: " · ")
+        }
         if data.tokenRemaining != nil { return data.displayRemaining }
         if data.monthlyRemaining != nil { return data.displayMonthlyRemaining }
         if let plan = data.displaySubscriptionPlan { return plan }
@@ -487,8 +471,8 @@ private struct WidgetUsageRow: View {
     }
     
     private var primaryTrailingValue: String {
-        if let plan = data.displaySubscriptionPlan, data.provider == .chatGPT, data.tokenRemaining == nil, data.monthlyRemaining == nil {
-            return plan
+        if (data.provider == .deepSeek || data.provider == .kimi || data.provider == .openAI), !data.currencyBalances.isEmpty {
+            return data.currencyBalances.map(formatWidgetBalance).joined(separator: " · ")
         }
         if data.tokenRemaining != nil { return data.displayRemaining }
         if data.monthlyRemaining != nil { return data.displayMonthlyRemaining }
@@ -496,18 +480,20 @@ private struct WidgetUsageRow: View {
     }
     
     private var trailingSubtitle: String? {
+        if data.provider == .deepSeek, !data.currencyBalances.isEmpty {
+            return data.currencyBalances.map { balance in
+                "\(balance.currency) 充值 \(formatWidgetBalanceAmount(balance.toppedUp, currency: balance.currency)) · 赠送 \(formatWidgetBalanceAmount(balance.granted, currency: balance.currency))"
+            }.joined(separator: "  ")
+        }
         if data.tokenTotal != nil {
             return "剩余 / 总额 \(data.displayTotal)"
         }
         if data.monthlyTotal != nil {
             return "月度总额 \(data.displayMonthlyTotal)"
         }
-        if data.provider == .chatGPT, let plan = data.displaySubscriptionPlan {
-            return "订阅 \(plan)"
-        }
         return nil
     }
-    
+
     private var progressFraction: Double? {
         if data.tokenTotal != nil && data.tokenUsed != nil {
             return max(0, min(data.usagePercentage / 100, 1))
@@ -543,6 +529,16 @@ private struct WidgetUsageRow: View {
     }
 }
 
+private func formatWidgetBalance(_ balance: CurrencyBalance) -> String {
+    formatWidgetBalanceAmount(balance.total, currency: balance.currency)
+}
+
+private func formatWidgetBalanceAmount(_ value: Double, currency: String) -> String {
+    let normalized = currency.uppercased()
+    let symbol = normalized == "CNY" ? "¥" : (normalized == "USD" ? "$" : "\(normalized) ")
+    return symbol + String(format: "%.2f", value)
+}
+
 private enum WidgetVisuals {
     static func providerColor(for provider: APIProvider) -> Color {
         switch provider {
@@ -555,8 +551,12 @@ private enum WidgetVisuals {
         case .openAI:
             return Color.green
         case .chatGPT:
-            return Color.mint
+            return Color.gray
         case .kimi:
+            return Color.orange
+        case .deepSeek:
+            return Color.blue
+        case .codex:
             return Color.orange
         }
     }

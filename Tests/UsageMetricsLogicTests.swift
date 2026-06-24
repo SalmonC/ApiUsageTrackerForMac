@@ -41,6 +41,37 @@ final class UsageMetricsLogicTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(monthPoints.count, dayPoints.count)
     }
 
+    func testDeepSeekDailyBalanceUsesFirstSnapshotAndSkipsMissingDays() throws {
+        let accountId = UUID()
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let now = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 6, day: 24, hour: 12)))
+        let day1Morning = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 6, day: 21, hour: 9)))
+        let day1Later = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 6, day: 21, hour: 18)))
+        let day3Morning = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 6, day: 23, hour: 8)))
+        let day4Morning = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 6, day: 24, hour: 8)))
+
+        let snapshots = [
+            makeDeepSeekBalanceSnapshot(accountID: accountId, date: day1Morning, balance: 10),
+            makeDeepSeekBalanceSnapshot(accountID: accountId, date: day1Later, balance: 9),
+            makeDeepSeekBalanceSnapshot(accountID: accountId, date: day3Morning, balance: 7),
+            makeDeepSeekBalanceSnapshot(accountID: accountId, date: day4Morning, balance: 12)
+        ]
+
+        let points = UsageMetricsLogic.deepSeekDailyBalancePoints(
+            accountSnapshots: snapshots,
+            window: .twoWeeks,
+            now: now,
+            calendar: calendar
+        )
+
+        XCTAssertEqual(points.map(\.balance), [10, 7, 12])
+        XCTAssertNil(points[0].deltaFromPrevious)
+        XCTAssertEqual(points[1].deltaFromPrevious, -3)
+        XCTAssertEqual(points[2].deltaFromPrevious, 5)
+        XCTAssertEqual(points.map { calendar.component(.day, from: $0.day) }, [21, 23, 24])
+    }
+
     func testDataConfidenceClassification() {
         let base = UsageData(
             accountId: UUID(),
@@ -73,25 +104,17 @@ final class UsageMetricsLogicTests: XCTestCase {
         let low = UsageMetricsLogic.dataConfidence(for: errored, language: .english)
         XCTAssertEqual(low.level, .low)
 
-        let chat = UsageData(
-            accountId: UUID(),
-            accountName: "Chat",
-            provider: .chatGPT,
-            tokenRemaining: nil,
-            tokenUsed: nil,
-            tokenTotal: nil,
-            refreshTime: nil,
-            lastUpdated: Date(),
-            errorMessage: nil,
-            monthlyRemaining: nil,
-            monthlyTotal: nil,
-            monthlyUsed: nil,
-            monthlyRefreshTime: nil,
-            nextRefreshTime: nil,
-            subscriptionPlan: "Plus"
-        )
-        let chatConfidence = UsageMetricsLogic.dataConfidence(for: chat, language: .english)
-        XCTAssertEqual(chatConfidence.level, .medium)
+        var deepSeekBalance = base
+        deepSeekBalance.provider = .deepSeek
+        deepSeekBalance.tokenRemaining = 4.54
+        deepSeekBalance.tokenUsed = nil
+        deepSeekBalance.tokenTotal = nil
+        deepSeekBalance.balanceDetails = [
+            CurrencyBalance(currency: "CNY", total: 4.54, granted: 0, toppedUp: 4.54)
+        ]
+        let balanceConfidence = UsageMetricsLogic.dataConfidence(for: deepSeekBalance, language: .chinese)
+        XCTAssertEqual(balanceConfidence.level, .balance)
+        XCTAssertEqual(balanceConfidence.level.label(language: .chinese), "余额")
     }
 
     func testRetryableErrorClassification() {
@@ -109,5 +132,21 @@ final class UsageMetricsLogicTests: XCTestCase {
 
         XCTAssertGreaterThan(a2, a1)
         XCTAssertLessThanOrEqual(a5, UInt64(2.8 * 1_000_000_000))
+    }
+
+    private func makeDeepSeekBalanceSnapshot(accountID: UUID, date: Date, balance: Double) -> UsageSnapshot {
+        UsageSnapshot(
+            accountId: accountID,
+            provider: .deepSeek,
+            capturedAt: date,
+            tokenUsed: nil,
+            tokenTotal: nil,
+            monthlyUsed: nil,
+            monthlyTotal: nil,
+            usagePercentage: nil,
+            monthlyUsagePercentage: nil,
+            balanceTotal: balance,
+            balanceCurrency: "CNY"
+        )
     }
 }

@@ -1,5 +1,4 @@
 import SwiftUI
-import ServiceManagement
 import Carbon
 import UserNotifications
 import QuartzCore
@@ -63,8 +62,7 @@ struct SettingsWindow: View {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private enum UsageAlertLevel: String {
-        case warning
-        case critical
+        case quota
     }
 
     private var statusItem: NSStatusItem?
@@ -138,35 +136,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 continue
             }
 
-            let level: UsageAlertLevel?
-            if usagePercentage >= Double(config.criticalPercentage) {
-                level = .critical
-            } else if usagePercentage >= Double(config.warningPercentage) {
-                level = .warning
-            } else {
-                level = nil
-            }
-
-            guard let level else {
+            guard usagePercentage >= Double(config.warningPercentage) else {
                 if clearAlertState(for: data.accountId) {
                     shouldPersist = true
                 }
                 continue
             }
 
-            if level == .warning {
-                let criticalKey = alertStateKey(accountId: data.accountId, level: .critical)
-                if let lastCritical = alertNotificationState[criticalKey], now.timeIntervalSince(lastCritical) < cooldown {
-                    continue
-                }
-            }
-
-            let stateKey = alertStateKey(accountId: data.accountId, level: level)
+            let stateKey = alertStateKey(accountId: data.accountId, level: .quota)
             if let lastSent = alertNotificationState[stateKey], now.timeIntervalSince(lastSent) < cooldown {
                 continue
             }
 
-            let content = localizedAlertContent(for: data, usagePercentage: usagePercentage, level: level)
+            let content = localizedAlertContent(for: data, usagePercentage: usagePercentage)
             sendNotification(title: content.title, body: content.body)
             alertNotificationState[stateKey] = now
             shouldPersist = true
@@ -193,8 +175,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func clearAlertState(for accountId: UUID) -> Bool {
         var changed = false
-        for level in [UsageAlertLevel.warning, UsageAlertLevel.critical] {
-            let key = alertStateKey(accountId: accountId, level: level)
+        let keys = [
+            alertStateKey(accountId: accountId, level: .quota),
+            "\(accountId.uuidString)-warning",
+            "\(accountId.uuidString)-critical"
+        ]
+        for key in keys {
             if alertNotificationState.removeValue(forKey: key) != nil {
                 changed = true
             }
@@ -204,8 +190,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func localizedAlertContent(
         for data: UsageData,
-        usagePercentage: Double,
-        level: UsageAlertLevel
+        usagePercentage: Double
     ) -> (title: String, body: String) {
         let language = viewModel.settings.language
         let rounded = Int(usagePercentage.rounded())
@@ -214,32 +199,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             : "\(rounded)%"
 
         if language == .english {
-            switch level {
-            case .critical:
-                return (
-                    "QuotaPulse Critical Alert",
-                    "\(data.accountName) usage reached \(rounded)% (\(usedText))."
-                )
-            case .warning:
-                return (
-                    "QuotaPulse Usage Warning",
-                    "\(data.accountName) usage reached \(rounded)% (\(usedText))."
-                )
-            }
+            return (
+                "QuotaPulse Usage Alert",
+                "\(data.accountName) usage reached \(rounded)% (\(usedText))."
+            )
         }
 
-        switch level {
-        case .critical:
-            return (
-                "QuotaPulse 用量告警",
-                "\(data.accountName) 用量已达 \(rounded)%（\(usedText)）。"
-            )
-        case .warning:
-            return (
-                "QuotaPulse 用量预警",
-                "\(data.accountName) 用量已达 \(rounded)%（\(usedText)）。"
-            )
-        }
+        return (
+            "QuotaPulse 用量提醒",
+            "\(data.accountName) 用量已达 \(rounded)%（\(usedText)）。"
+        )
     }
     
     private func sendNotification(title: String, body: String) {
@@ -483,7 +452,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         
         let launchAtLoginItem = NSMenuItem(title: "开机自启动", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
         launchAtLoginItem.target = self
-        launchAtLoginItem.state = isLaunchAtLogin() ? .on : .off
+        viewModel.refreshLaunchAtLoginStatus()
+        launchAtLoginItem.state = viewModel.launchAtLoginEnabled ? .on : .off
         menu.addItem(launchAtLoginItem)
         
         menu.addItem(NSMenuItem.separator())
@@ -548,16 +518,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     @objc private func toggleLaunchAtLogin() {
-        let isEnabled = isLaunchAtLogin()
-        if isEnabled {
-            try? SMAppService.mainApp.unregister()
-        } else {
-            try? SMAppService.mainApp.register()
-        }
-    }
-    
-    private func isLaunchAtLogin() -> Bool {
-        return SMAppService.mainApp.status == .enabled
+        viewModel.setLaunchAtLoginEnabled(!viewModel.launchAtLoginEnabled)
     }
     
     @objc private func showAbout() {

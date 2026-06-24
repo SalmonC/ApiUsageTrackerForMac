@@ -1,4 +1,5 @@
 import Foundation
+import ServiceManagement
 import SwiftUI
 import WidgetKit
 
@@ -12,7 +13,9 @@ final class AppViewModel: ObservableObject {
     @Published var refreshingAccountIDs: Set<UUID> = []
     @Published var dashboardSortMode: DashboardSortMode = Storage.shared.loadDashboardSortMode()
     @Published var dashboardManualOrder: [UUID] = Storage.shared.loadDashboardManualOrder()
-    @Published var trendWindow: TrendWindow = .day
+    @Published var trendWindow: TrendWindow = .week
+    @Published private(set) var launchAtLoginEnabled = false
+    @Published private(set) var launchAtLoginErrorMessage: String?
 
     private struct TrendCacheKey: Hashable {
         let accountId: UUID
@@ -40,11 +43,18 @@ final class AppViewModel: ObservableObject {
         }
         rebuildSnapshotsIndex()
         pruneAndPersistSnapshots(now: Date())
+        refreshLaunchAtLoginStatus()
         Storage.shared.saveRefreshInterval(settings.refreshInterval)
     }
     
     func loadSettings() {
         settings = Storage.shared.loadSettings()
+        trendWindow = settings.dashboardTrendWindow
+    }
+
+    func refreshLaunchAtLoginStatus() {
+        launchAtLoginEnabled = Self.isLaunchAtLoginEnabled()
+        settings.launchAtLogin = launchAtLoginEnabled
     }
     
     private func loadCachedData() {
@@ -71,7 +81,9 @@ final class AppViewModel: ObservableObject {
             loadSettings()
         }
         let language = settings.language
-        let activeAccounts = settings.accounts.filter { $0.isEnabled && !$0.apiKey.isEmpty }
+        let activeAccounts = settings.accounts.filter {
+            $0.provider.supportsRemainingQuotaQuery && $0.isEnabled && (!$0.provider.requiresCredential || !$0.apiKey.isEmpty)
+        }
         var orderedResults = Array<UsageData?>(repeating: nil, count: activeAccounts.count)
         
         await withTaskGroup(of: (Int, UsageData?).self) { group in
@@ -86,7 +98,10 @@ final class AppViewModel: ObservableObject {
             }
         }
         
-        let newData = orderedResults.compactMap { $0 }.map(resolveRefreshTime)
+        let previousByAccount = Dictionary(uniqueKeysWithValues: usageData.map { ($0.accountId, $0) })
+        let newData = orderedResults.compactMap { $0 }
+            .map { applyDeepSeekConsumptionEstimate(to: $0, previous: previousByAccount[$0.accountId]) }
+            .map(resolveRefreshTime)
         
         usageData = newData
         ensureManualOrderContainsCurrentAccounts()
@@ -104,7 +119,9 @@ final class AppViewModel: ObservableObject {
         guard refreshingAccountIDs.insert(accountId).inserted else { return }
 
         loadSettings()
-        guard let account = settings.accounts.first(where: { $0.id == accountId && $0.isEnabled && !$0.apiKey.isEmpty }) else {
+        guard let account = settings.accounts.first(where: {
+            $0.id == accountId && $0.provider.supportsRemainingQuotaQuery && $0.isEnabled && (!$0.provider.requiresCredential || !$0.apiKey.isEmpty)
+        }) else {
             refreshingAccountIDs.remove(accountId)
             return
         }
@@ -114,7 +131,10 @@ final class AppViewModel: ObservableObject {
         guard let fetched = await Self.fetchUsageData(for: account, language: settings.language) else {
             return
         }
-        let updatedData = resolveRefreshTime(fetched)
+        let previousData = usageData.first(where: { $0.accountId == accountId })
+        let updatedData = resolveRefreshTime(
+            applyDeepSeekConsumptionEstimate(to: fetched, previous: previousData)
+        )
 
         if let existingIndex = usageData.firstIndex(where: { $0.accountId == accountId }) {
             usageData[existingIndex] = updatedData
@@ -130,8 +150,13 @@ final class AppViewModel: ObservableObject {
     }
     
     func saveSettings(_ newSettings: AppSettings) {
-        settings = newSettings
-        let accountLookup = Dictionary(uniqueKeysWithValues: newSettings.accounts.map { ($0.id, $0) })
+        var persistedSettings = newSettings
+        setLaunchAtLoginEnabled(newSettings.launchAtLogin)
+        persistedSettings.launchAtLogin = launchAtLoginEnabled
+
+        settings = persistedSettings
+        trendWindow = persistedSettings.dashboardTrendWindow
+        let accountLookup = Dictionary(uniqueKeysWithValues: persistedSettings.accounts.map { ($0.id, $0) })
         usageData = usageData
             .filter { accountLookup[$0.accountId] != nil }
             .map { item in
@@ -143,10 +168,34 @@ final class AppViewModel: ObservableObject {
             }
         ensureManualOrderContainsCurrentAccounts()
         Storage.shared.saveUsageData(usageData)
-        removeSnapshotsForDeletedAccounts(validIDs: Set(newSettings.accounts.map(\.id)))
-        Storage.shared.saveSettings(newSettings)
-        Storage.shared.saveRefreshInterval(newSettings.refreshInterval)
+        removeSnapshotsForDeletedAccounts(validIDs: Set(persistedSettings.accounts.map(\.id)))
+        Storage.shared.saveSettings(persistedSettings)
+        Storage.shared.saveRefreshInterval(persistedSettings.refreshInterval)
         onSettingsSaved?()
+    }
+
+    @discardableResult
+    func setLaunchAtLoginEnabled(_ enabled: Bool) -> Bool {
+        do {
+            if enabled {
+                if SMAppService.mainApp.status != .enabled {
+                    try SMAppService.mainApp.register()
+                }
+            } else if SMAppService.mainApp.status == .enabled {
+                try SMAppService.mainApp.unregister()
+            }
+            launchAtLoginErrorMessage = nil
+        } catch {
+            launchAtLoginErrorMessage = error.localizedDescription
+            Logger.log("Failed to update launch at login: \(error)")
+        }
+
+        refreshLaunchAtLoginStatus()
+        return launchAtLoginEnabled == enabled
+    }
+
+    nonisolated private static func isLaunchAtLoginEnabled() -> Bool {
+        SMAppService.mainApp.status == .enabled
     }
     
     func openSettings() {
@@ -190,6 +239,15 @@ final class AppViewModel: ObservableObject {
         )
         trendCache[cacheKey] = points
         return points
+    }
+
+    func deepSeekBalanceTrendPoints(for accountId: UUID, window: TrendWindow? = nil) -> [DeepSeekBalanceTrendPoint] {
+        let selectedWindow = window ?? trendWindow
+        let accountSnapshots = snapshotsByAccount[accountId] ?? []
+        return UsageMetricsLogic.deepSeekDailyBalancePoints(
+            accountSnapshots: accountSnapshots,
+            window: selectedWindow
+        )
     }
 
     func dataConfidence(for data: UsageData) -> DataConfidence {
@@ -412,7 +470,8 @@ final class AppViewModel: ObservableObject {
                 nextRefreshTime: result.nextRefreshTime,
                 subscriptionPlan: result.subscriptionPlan,
                 primaryCycleIsPercentage: result.primaryCycleIsPercentage,
-                secondaryCycleIsPercentage: result.secondaryCycleIsPercentage
+                secondaryCycleIsPercentage: result.secondaryCycleIsPercentage,
+                balanceDetails: result.balanceDetails.isEmpty ? nil : result.balanceDetails
             )
         } catch is CancellationError {
             return nil
@@ -473,7 +532,7 @@ final class AppViewModel: ObservableObject {
 
     nonisolated private static func preflightErrorMessage(for account: APIAccount, language: AppLanguage) async -> String? {
         let credential = account.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        if credential.isEmpty {
+        if account.provider.requiresCredential && credential.isEmpty {
             return localized(
                 zh: "预检失败：未配置凭证",
                 en: "Preflight failed: missing credential",
@@ -505,29 +564,20 @@ final class AppViewModel: ObservableObject {
         credential: String,
         language: AppLanguage
     ) -> String? {
+        guard provider.supportsRemainingQuotaQuery else {
+            return localized(
+                zh: "\(provider.displayName) 监控方案已删除：没有稳定的官方 API 接口支撑",
+                en: "\(provider.displayName) monitoring has been removed because it is not backed by a stable official API",
+                language: language
+            )
+        }
+
         switch provider {
         case .openAI:
             guard credential.hasPrefix("sk-"), credential.count >= 20 else {
                 return localized(
-                    zh: "OpenAI API Key 格式异常（应以 sk- 开头）",
-                    en: "invalid OpenAI API key format (expected sk- prefix)",
-                    language: language
-                )
-            }
-        case .chatGPT:
-            let looksLikeJWT = credential.split(separator: ".").count == 3
-            let looksLikeCookie = credential.contains("=") || credential.contains("session-token")
-            if credential.hasPrefix("sk-") {
-                return localized(
-                    zh: "ChatGPT 账号应填写 access token 或 session token，不是 API Key",
-                    en: "ChatGPT account requires access/session token, not API key",
-                    language: language
-                )
-            }
-            guard looksLikeJWT || looksLikeCookie || credential.count >= 24 else {
-                return localized(
-                    zh: "ChatGPT 凭证格式异常，请检查 access token/session token",
-                    en: "invalid ChatGPT credential format, check access/session token",
+                    zh: "OpenAI Admin Key 格式异常（通常以 sk- 开头）",
+                    en: "invalid OpenAI Admin Key format (usually starts with sk-)",
                     language: language
                 )
             }
@@ -539,7 +589,7 @@ final class AppViewModel: ObservableObject {
                     language: language
                 )
             }
-        case .miniMax, .glm, .kimi:
+        case .miniMax, .kimi, .deepSeek:
             guard credential.count >= 12 else {
                 return localized(
                     zh: "\(provider.displayName) 凭证格式异常，请检查是否完整",
@@ -547,6 +597,8 @@ final class AppViewModel: ObservableObject {
                     language: language
                 )
             }
+        case .glm, .chatGPT, .codex:
+            break
         }
         return nil
     }
@@ -608,18 +660,29 @@ final class AppViewModel: ObservableObject {
     nonisolated private static func providerHealthProbeURL(for provider: APIProvider) -> URL? {
         switch provider {
         case .miniMax:
-            return URL(string: "https://api.minimax.chat")
-        case .glm:
-            return URL(string: "https://open.bigmodel.cn")
+            return URL(string: "https://www.minimax.io")
         case .tavily:
             return URL(string: "https://api.tavily.com")
         case .openAI:
             return URL(string: "https://api.openai.com")
-        case .chatGPT:
-            return URL(string: "https://chatgpt.com/api/auth/session")
         case .kimi:
-            return URL(string: "https://api.moonshot.cn")
+            return URL(string: "https://api.moonshot.ai")
+        case .deepSeek:
+            return URL(string: "https://api.deepseek.com")
+        case .glm, .chatGPT, .codex:
+            return nil
         }
+    }
+
+    private func applyDeepSeekConsumptionEstimate(to data: UsageData, previous: UsageData?) -> UsageData {
+        guard data.provider == .deepSeek, !data.currencyBalances.isEmpty else { return data }
+        var updated = data
+        updated.balanceDetails = DeepSeekBalanceLogic.addEstimatedConsumption(
+            to: data.currencyBalances,
+            previous: previous?.currencyBalances ?? []
+        )
+        updated.tokenRemaining = updated.currencyBalances.first?.total
+        return updated
     }
 
     nonisolated private static func classifyFetchError(_ error: Error, language: AppLanguage) -> String {
@@ -631,7 +694,41 @@ final class AppViewModel: ObservableObject {
                     en: "Request failed: missing credential",
                     language: language
                 )
-            case .httpError(let code), .httpErrorWithMessage(let code, _):
+            case .httpErrorWithMessage(let code, let apiMessage):
+                if code < 0 {
+                    return localized(
+                        zh: "查询失败：供应商接口异常（\(apiMessage)）",
+                        en: "Request failed: provider endpoint error (\(apiMessage))",
+                        language: language
+                    )
+                }
+                if code == 401 || code == 403 {
+                    return localized(
+                        zh: "查询失败：鉴权失败（401/403），请更新凭证",
+                        en: "Request failed: authorization error (401/403), update credential",
+                        language: language
+                    )
+                }
+                if code == 429 {
+                    return localized(
+                        zh: "查询失败：触发频率限制（429），请稍后重试",
+                        en: "Request failed: rate limited (429), retry later",
+                        language: language
+                    )
+                }
+                if code >= 500 {
+                    return localized(
+                        zh: "查询失败：供应商服务异常（HTTP \(code)）",
+                        en: "Request failed: provider service error (HTTP \(code))",
+                        language: language
+                    )
+                }
+                return localized(
+                    zh: "查询失败：供应商接口异常（\(apiMessage)）",
+                    en: "Request failed: provider endpoint error (\(apiMessage))",
+                    language: language
+                )
+            case .httpError(let code):
                 if code == 401 || code == 403 {
                     return localized(
                         zh: "查询失败：鉴权失败（401/403），请更新凭证",
@@ -771,23 +868,29 @@ final class AppViewModel: ObservableObject {
     private func appendSnapshots(from usageItems: [UsageData], capturedAt: Date) {
         guard !usageItems.isEmpty else { return }
         var changed = false
+        var latestSnapshotByAccount = snapshotsByAccount.compactMapValues(\.last)
 
         for item in usageItems {
             guard let snapshot = makeSnapshot(from: item, capturedAt: capturedAt) else {
                 continue
             }
 
-            if let lastForAccount = usageSnapshots.last(where: { $0.accountId == item.accountId }),
+            if let lastForAccount = latestSnapshotByAccount[item.accountId],
                isDuplicateSnapshot(lastForAccount, snapshot) {
                 continue
             }
 
             usageSnapshots.append(snapshot)
+            snapshotsByAccount[item.accountId, default: []].append(snapshot)
+            latestSnapshotByAccount[item.accountId] = snapshot
             changed = true
         }
 
         if changed {
-            pruneAndPersistSnapshots(now: capturedAt)
+            let pruned = pruneAndPersistSnapshots(now: capturedAt, forcePersist: true)
+            if !pruned {
+                bumpSnapshotRevision()
+            }
         }
     }
 
@@ -808,8 +911,11 @@ final class AppViewModel: ObservableObject {
             primaryPercentage != nil ||
             secondaryPercentage != nil ||
             data.tokenUsed != nil ||
-            data.monthlyUsed != nil
+            data.monthlyUsed != nil ||
+            !data.currencyBalances.isEmpty
         guard hasTrackableValue else { return nil }
+
+        let primaryBalance = data.currencyBalances.first
 
         return UsageSnapshot(
             accountId: data.accountId,
@@ -820,7 +926,9 @@ final class AppViewModel: ObservableObject {
             monthlyUsed: data.monthlyUsed,
             monthlyTotal: data.monthlyTotal,
             usagePercentage: primaryPercentage,
-            monthlyUsagePercentage: secondaryPercentage
+            monthlyUsagePercentage: secondaryPercentage,
+            balanceTotal: primaryBalance?.total,
+            balanceCurrency: primaryBalance?.currency
         )
     }
 
@@ -834,10 +942,13 @@ final class AppViewModel: ObservableObject {
             old.monthlyUsed == new.monthlyUsed &&
             old.monthlyTotal == new.monthlyTotal &&
             old.usagePercentage == new.usagePercentage &&
-            old.monthlyUsagePercentage == new.monthlyUsagePercentage
+            old.monthlyUsagePercentage == new.monthlyUsagePercentage &&
+            old.balanceTotal == new.balanceTotal &&
+            old.balanceCurrency == new.balanceCurrency
     }
 
-    private func pruneAndPersistSnapshots(now: Date) {
+    @discardableResult
+    private func pruneAndPersistSnapshots(now: Date, forcePersist: Bool = false) -> Bool {
         let cutoff = now.addingTimeInterval(-snapshotRetentionDays)
         let freshSnapshots = usageSnapshots.filter { $0.capturedAt >= cutoff }
         let grouped = Dictionary(grouping: freshSnapshots, by: \.accountId)
@@ -854,8 +965,13 @@ final class AppViewModel: ObservableObject {
             usageSnapshots = merged
             rebuildSnapshotsIndex()
             bumpSnapshotRevision()
+            Storage.shared.saveUsageSnapshots(usageSnapshots)
+            return true
         }
-        Storage.shared.saveUsageSnapshots(usageSnapshots)
+        if forcePersist {
+            Storage.shared.saveUsageSnapshots(usageSnapshots)
+        }
+        return false
     }
 
     private func removeSnapshotsForDeletedAccounts(validIDs: Set<UUID>) {

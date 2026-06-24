@@ -21,30 +21,45 @@ struct SettingsView: View {
     @State private var warningThreshold: Int = 80
     @State private var criticalThreshold: Int = 90
     @State private var alertCooldownMinutes: Int = 120
+    @State private var deepSeekBalanceThreshold: Double = 1
     @State private var showTrendInDashboard: Bool = true
+    @State private var dashboardSortMode: DashboardSortMode = .manual
+    @State private var dashboardTrendWindow: TrendWindow = .week
+    @State private var launchAtLogin: Bool = false
     @State private var editingAccountID: UUID?
     @State private var nameDraftByAccountID: [UUID: String] = [:]
     @State private var nameAtEditStartByAccountID: [UUID: String] = [:]
     @State private var defocusObserverTokens: [NSObjectProtocol] = []
     @State private var localClickMonitor: Any?
+    @State private var selectedSettingsTab: SettingsTab = .general
     
     enum SaveButtonState {
         case normal
         case saved
     }
+
+    private enum SettingsTab: String, CaseIterable, Identifiable {
+        case general
+        case accounts
+
+        var id: String { rawValue }
+    }
     
     var body: some View {
-        TabView {
-            generalSettingsView
-                .tabItem {
-                    Label(language == .english ? "General" : "通用", systemImage: "gear")
+        VStack(spacing: 0) {
+            settingsTabBar
+
+            Group {
+                switch selectedSettingsTab {
+                case .general:
+                    generalSettingsView
+                case .accounts:
+                    accountsSettingsView
                 }
-            
-            accountsSettingsView
-                .tabItem {
-                    Label(language == .english ? "API Accounts" : "API 账号", systemImage: "key")
-                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .background(Color(NSColor.windowBackgroundColor))
         .onAppear {
             loadSettings()
             installDefocusObserversIfNeeded()
@@ -70,6 +85,27 @@ struct SettingsView: View {
                  : "将删除该账号配置，并移除钥匙串中已保存的 API Key。")
         }
     }
+
+    private var settingsTabBar: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Spacer()
+                Picker("", selection: $selectedSettingsTab) {
+                    Text(language == .english ? "General" : "通用").tag(SettingsTab.general)
+                    Text(language == .english ? "API Accounts" : "API 账号").tag(SettingsTab.accounts)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: language == .english ? 260 : 220)
+                Spacer()
+            }
+            .padding(.top, 10)
+            .padding(.bottom, 8)
+            .background(Color(NSColor.windowBackgroundColor))
+
+            Divider()
+        }
+    }
     
     private var generalSettingsView: some View {
         VStack(spacing: 0) {
@@ -88,41 +124,134 @@ struct SettingsView: View {
                     }
 
                     generalCard(
-                        title: language == .english ? "Language & Refresh" : "语言与刷新",
-                        subtitle: language == .english ? "UI language and background refresh cadence" : "界面语言与后台自动刷新频率",
-                        icon: "globe"
+                        title: language == .english ? "Appearance" : "外观",
+                        subtitle: language == .english ? "Language used across the app" : "应用界面显示语言",
+                        icon: "textformat"
                     ) {
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text(language == .english ? "Language" : "语言")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                        VStack(alignment: .leading, spacing: 7) {
+                            settingLabel(language == .english ? "Language" : "语言")
                             Picker("", selection: $language) {
                                 Text(language == .english ? "Chinese" : "中文").tag(AppLanguage.chinese)
                                 Text(language == .english ? "English" : "英文").tag(AppLanguage.english)
                             }
                             .pickerStyle(.segmented)
-
-                            Text(language == .english ? "Refresh interval" : "刷新间隔")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                                .padding(.top, 2)
-                            Picker("", selection: $refreshInterval) {
-                                Text(language == .english ? "1 minute" : "1 分钟").tag(1)
-                                Text(language == .english ? "5 minutes" : "5 分钟").tag(5)
-                                Text(language == .english ? "15 minutes" : "15 分钟").tag(15)
-                                Text(language == .english ? "30 minutes" : "30 分钟").tag(30)
-                                Text(language == .english ? "1 hour" : "1 小时").tag(60)
-                            }
-                            .pickerStyle(.segmented)
+                            .frame(maxWidth: 260, alignment: .leading)
                         }
                     }
 
                     generalCard(
-                        title: language == .english ? "Usage Alerts" : "用量提醒",
-                        subtitle: language == .english ? "Notify when quota usage reaches thresholds" : "在用量达到阈值时发送提醒",
+                        title: language == .english ? "Refresh & Startup" : "刷新与启动",
+                        subtitle: language == .english ? "Background refresh cadence and login startup" : "后台刷新频率和登录后自动启动",
+                        icon: "arrow.clockwise"
+                    ) {
+                        VStack(alignment: .leading, spacing: 12) {
+                            VStack(alignment: .leading, spacing: 7) {
+                                settingLabel(language == .english ? "Auto refresh" : "自动刷新")
+                                Picker("", selection: $refreshInterval) {
+                                    Text(language == .english ? "1m" : "1 分钟").tag(1)
+                                    Text(language == .english ? "5m" : "5 分钟").tag(5)
+                                    Text(language == .english ? "15m" : "15 分钟").tag(15)
+                                    Text(language == .english ? "30m" : "30 分钟").tag(30)
+                                    Text(language == .english ? "1h" : "1 小时").tag(60)
+                                }
+                                .pickerStyle(.segmented)
+                                .frame(maxWidth: 560, alignment: .leading)
+                            }
+
+                            Divider()
+
+                            Toggle(isOn: $launchAtLogin) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(language == .english ? "Launch at login" : "开机自启动")
+                                    Text(
+                                        language == .english
+                                        ? "Start QuotaPulse automatically after you sign in to macOS."
+                                        : "登录 macOS 后自动启动 QuotaPulse。"
+                                    )
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                                }
+                            }
+                            .toggleStyle(.switch)
+
+                            if let launchError = viewModel.launchAtLoginErrorMessage {
+                                Label(
+                                    language == .english
+                                    ? "Failed to update launch item: \(launchError)"
+                                    : "更新开机自启动失败：\(launchError)",
+                                    systemImage: "exclamationmark.triangle.fill"
+                                )
+                                .font(.caption2)
+                                .foregroundColor(.red)
+                            }
+                        }
+                    }
+
+                    generalCard(
+                        title: language == .english ? "Dashboard" : "看板",
+                        subtitle: language == .english ? "Card order and DeepSeek balance trend display" : "卡片排序和 DeepSeek 余额趋势显示",
+                        icon: "rectangle.grid.1x2"
+                    ) {
+                        VStack(alignment: .leading, spacing: 12) {
+                            VStack(alignment: .leading, spacing: 7) {
+                                settingLabel(language == .english ? "Card order" : "卡片排序")
+                                Picker("", selection: $dashboardSortMode) {
+                                    ForEach(DashboardSortMode.allCases) { mode in
+                                        Label(mode.displayName(language: language), systemImage: dashboardSortModeIconName(mode))
+                                            .tag(mode)
+                                    }
+                                }
+                                .pickerStyle(.segmented)
+                                .frame(maxWidth: 430, alignment: .leading)
+                                Text(language == .english
+                                     ? "Manual mode enables drag reordering in the dashboard."
+                                     : "手动排序模式下，可在看板中拖拽调整卡片顺序。")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+
+                            Divider()
+
+                            Toggle(isOn: $showTrendInDashboard) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(language == .english ? "Show DeepSeek balance trend" : "显示 DeepSeek 余额趋势")
+                                    Text(
+                                        language == .english
+                                        ? "Only affects DeepSeek cards. Other providers do not show trend charts."
+                                        : "仅影响 DeepSeek 卡片；其他供应商不显示趋势图。"
+                                    )
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                                }
+                            }
+                            .toggleStyle(.switch)
+
+                            if showTrendInDashboard {
+                                VStack(alignment: .leading, spacing: 7) {
+                                    settingLabel(language == .english ? "Trend range" : "趋势范围")
+                                    Picker("", selection: $dashboardTrendWindow) {
+                                        ForEach(TrendWindow.dashboardSelectable) { window in
+                                            Text(window.displayName(language: language)).tag(window)
+                                        }
+                                    }
+                                    .pickerStyle(.segmented)
+                                    .frame(maxWidth: 430, alignment: .leading)
+                                }
+                                .padding(10)
+                                .background(Color.secondary.opacity(0.08))
+                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            }
+                        }
+                    }
+
+                    generalCard(
+                        title: language == .english ? "Alerts & Thresholds" : "提醒与阈值",
+                        subtitle: language == .english
+                            ? "Notifications and local balance color thresholds"
+                            : "通知提醒和本地余额颜色阈值",
                         icon: "bell.badge"
                     ) {
-                        VStack(alignment: .leading, spacing: 10) {
+                        VStack(alignment: .leading, spacing: 12) {
                             Toggle(isOn: $alertsEnabled) {
                                 Text(language == .english ? "Enable low-quota notifications" : "开启低余量通知")
                             }
@@ -130,98 +259,103 @@ struct SettingsView: View {
 
                             if alertsEnabled {
                                 VStack(alignment: .leading, spacing: 8) {
-                                    HStack {
-                                        Text(language == .english ? "Warning threshold" : "预警阈值")
-                                            .font(.caption2)
-                                            .foregroundColor(.secondary)
-                                        Spacer()
-                                        Text("\(warningThreshold)%")
-                                            .font(.caption2)
-                                            .monospacedDigit()
-                                            .foregroundColor(.secondary)
-                                    }
-                                    Picker("", selection: $warningThreshold) {
-                                        Text("70%").tag(70)
-                                        Text("75%").tag(75)
-                                        Text("80%").tag(80)
-                                        Text("85%").tag(85)
-                                        Text("90%").tag(90)
-                                    }
-                                    .pickerStyle(.segmented)
-                                    .onChange(of: warningThreshold) { _, newValue in
-                                        if criticalThreshold <= newValue {
-                                            criticalThreshold = min(100, newValue + 5)
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        HStack {
+                                            settingLabel(language == .english ? "Notify when usage reaches" : "用量达到时通知")
+                                            Spacer()
+                                            Text("\(warningThreshold)%")
+                                                .font(.headline)
+                                                .fontDesign(.rounded)
+                                                .monospacedDigit()
                                         }
+
+                                        Slider(
+                                            value: Binding(
+                                                get: { Double(warningThreshold) },
+                                                set: { newValue in
+                                                    let stepped = Int((newValue / 5).rounded() * 5)
+                                                    warningThreshold = min(max(stepped, 50), 100)
+                                                    criticalThreshold = warningThreshold
+                                                }
+                                            ),
+                                            in: 50...100,
+                                            step: 5
+                                        )
+
+                                        HStack {
+                                            Text("50%")
+                                            Spacer()
+                                            Text("75%")
+                                            Spacer()
+                                            Text("100%")
+                                        }
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+
+                                        Text(language == .english
+                                             ? "Applies to providers that expose usage percentage: MiniMax, Tavily, and Codex. Balance-only providers such as DeepSeek, KIMI, and OpenAI Costs are not covered by this notification."
+                                             : "适用于能返回用量百分比的供应商：MiniMax、Tavily、Codex。DeepSeek、KIMI、OpenAI Costs 这类余额/花费型供应商不触发此通知。")
+                                            .font(.caption2)
+                                            .foregroundColor(.secondary)
+                                            .fixedSize(horizontal: false, vertical: true)
                                     }
 
-                                    HStack {
-                                        Text(language == .english ? "Critical threshold" : "告警阈值")
-                                            .font(.caption2)
-                                            .foregroundColor(.secondary)
-                                        Spacer()
-                                        Text("\(criticalThreshold)%")
-                                            .font(.caption2)
-                                            .monospacedDigit()
-                                            .foregroundColor(.secondary)
-                                    }
-                                    Picker("", selection: $criticalThreshold) {
-                                        Text("85%").tag(85)
-                                        Text("90%").tag(90)
-                                        Text("95%").tag(95)
-                                        Text("100%").tag(100)
-                                    }
-                                    .pickerStyle(.segmented)
-                                    .onChange(of: criticalThreshold) { _, newValue in
-                                        if newValue <= warningThreshold {
-                                            warningThreshold = max(70, newValue - 5)
+                                    compactThresholdPicker(
+                                        title: language == .english ? "Cooldown" : "冷却",
+                                        valueText: cooldownLabel(alertCooldownMinutes)
+                                    ) {
+                                        Picker("", selection: $alertCooldownMinutes) {
+                                            Text(language == .english ? "30m" : "30分").tag(30)
+                                            Text(language == .english ? "1h" : "1时").tag(60)
+                                            Text(language == .english ? "2h" : "2时").tag(120)
+                                            Text(language == .english ? "4h" : "4时").tag(240)
+                                            Text(language == .english ? "24h" : "24时").tag(1440)
                                         }
+                                        .pickerStyle(.segmented)
                                     }
-
-                                    HStack {
-                                        Text(language == .english ? "Notification cooldown" : "通知冷却时间")
-                                            .font(.caption2)
-                                            .foregroundColor(.secondary)
-                                        Spacer()
-                                        Text(cooldownLabel(alertCooldownMinutes))
-                                            .font(.caption2)
-                                            .monospacedDigit()
-                                            .foregroundColor(.secondary)
-                                    }
-                                    Picker("", selection: $alertCooldownMinutes) {
-                                        Text(language == .english ? "30m" : "30 分钟").tag(30)
-                                        Text(language == .english ? "1h" : "1 小时").tag(60)
-                                        Text(language == .english ? "2h" : "2 小时").tag(120)
-                                        Text(language == .english ? "4h" : "4 小时").tag(240)
-                                        Text(language == .english ? "8h" : "8 小时").tag(480)
-                                        Text(language == .english ? "24h" : "24 小时").tag(1440)
-                                    }
-                                    .pickerStyle(.segmented)
                                 }
                                 .padding(10)
                                 .background(Color.gray.opacity(0.08))
                                 .cornerRadius(10)
                             }
-                        }
-                    }
 
-                    generalCard(
-                        title: language == .english ? "Dashboard" : "看板显示",
-                        subtitle: language == .english ? "Choose whether trend charts are shown in cards" : "控制卡片中趋势图的显示",
-                        icon: "chart.line.uptrend.xyaxis"
-                    ) {
-                        Toggle(isOn: $showTrendInDashboard) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(language == .english ? "Show usage trends in dashboard" : "在看板显示用量趋势")
-                                Text(
-                                    language == .english
-                                    ? "Turn off to simplify cards and reduce chart rendering."
-                                    : "关闭后可简化卡片内容并减少图表渲染。"
-                                )
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
+                            Divider()
+
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    Text(language == .english ? "DeepSeek low balance color threshold" : "DeepSeek 低余额颜色阈值")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                    Spacer()
+                                    Text(String(format: "%.2f", max(0, deepSeekBalanceThreshold)))
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                        .monospacedDigit()
+                                }
+
+                                HStack(spacing: 8) {
+                                    TextField(
+                                        language == .english ? "Threshold" : "阈值",
+                                        value: $deepSeekBalanceThreshold,
+                                        format: .number.precision(.fractionLength(0...2))
+                                    )
+                                    .textFieldStyle(.roundedBorder)
+                                    .frame(width: 120)
+                                    .onChange(of: deepSeekBalanceThreshold) { _, newValue in
+                                        if !newValue.isFinite || newValue < 0 {
+                                            deepSeekBalanceThreshold = 0
+                                        }
+                                    }
+
+                                    Text(language == .english
+                                         ? "Only affects dashboard color. The public balance API does not return the official alert threshold."
+                                         : "仅影响看板颜色；官方公开余额接口不返回官网报警阈值。")
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
                             }
                         }
-                        .toggleStyle(.switch)
                     }
 
                     generalCard(
@@ -424,6 +558,13 @@ struct SettingsView: View {
             RoundedRectangle(cornerRadius: 12)
                 .stroke(Color.primary.opacity(0.06), lineWidth: 1)
         )
+    }
+
+    private func settingLabel(_ text: String) -> some View {
+        Text(text)
+            .font(.caption)
+            .fontWeight(.medium)
+            .foregroundColor(.secondary)
     }
     
     private var accountsSettingsView: some View {
@@ -656,7 +797,12 @@ struct SettingsView: View {
         warningThreshold = settings.alertSettings.warningPercentage
         criticalThreshold = settings.alertSettings.criticalPercentage
         alertCooldownMinutes = settings.alertSettings.cooldownMinutes
+        deepSeekBalanceThreshold = settings.deepSeekBalanceSettings.threshold
         showTrendInDashboard = settings.showTrendInDashboard
+        dashboardTrendWindow = settings.dashboardTrendWindow
+        dashboardSortMode = viewModel.dashboardSortMode
+        viewModel.refreshLaunchAtLoginStatus()
+        launchAtLogin = viewModel.launchAtLoginEnabled
         isRecordingHotkey = false
         hotkeyBeforeRecording = nil
         hotkeyError = nil
@@ -685,9 +831,14 @@ struct SettingsView: View {
             hotkey: hotkey,
             language: language,
             alertSettings: normalizedAlertSettings(),
-            showTrendInDashboard: showTrendInDashboard
+            deepSeekBalanceSettings: normalizedDeepSeekBalanceSettings(),
+            showTrendInDashboard: showTrendInDashboard,
+            dashboardTrendWindow: dashboardTrendWindow,
+            launchAtLogin: launchAtLogin
         )
         viewModel.saveSettings(settings)
+        viewModel.setDashboardSortMode(dashboardSortMode)
+        launchAtLogin = viewModel.launchAtLoginEnabled
         savedDraftSignature = currentDraftSignature()
         
         withAnimation {
@@ -898,20 +1049,61 @@ struct SettingsView: View {
             hotkey: hotkey,
             language: language,
             alertSettings: normalizedAlertSettings(),
-            showTrendInDashboard: showTrendInDashboard
+            deepSeekBalanceSettings: normalizedDeepSeekBalanceSettings(),
+            showTrendInDashboard: showTrendInDashboard,
+            dashboardTrendWindow: dashboardTrendWindow,
+            launchAtLogin: launchAtLogin
         )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         guard let data = try? encoder.encode(draft) else { return "" }
-        return String(decoding: data, as: UTF8.self)
+        return "\(String(decoding: data, as: UTF8.self))|dashboardSortMode=\(dashboardSortMode.rawValue)"
+    }
+
+    private func dashboardSortModeIconName(_ mode: DashboardSortMode) -> String {
+        switch mode {
+        case .manual:
+            return "line.3.horizontal.circle"
+        case .provider:
+            return "square.grid.2x2"
+        case .name:
+            return "textformat.abc"
+        }
+    }
+
+    @ViewBuilder
+    private func compactThresholdPicker<Content: View>(
+        title: String,
+        valueText: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Text(title)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                Spacer()
+                Text(valueText)
+                    .font(.caption2)
+                    .monospacedDigit()
+                    .foregroundColor(.secondary)
+            }
+            content()
+        }
     }
 
     private func normalizedAlertSettings() -> ThresholdAlertSettings {
         ThresholdAlertSettings(
             isEnabled: alertsEnabled,
             warningPercentage: warningThreshold,
-            criticalPercentage: criticalThreshold,
+            criticalPercentage: warningThreshold,
             cooldownMinutes: alertCooldownMinutes
+        ).normalized
+    }
+
+    private func normalizedDeepSeekBalanceSettings() -> DeepSeekBalanceSettings {
+        DeepSeekBalanceSettings(
+            threshold: deepSeekBalanceThreshold
         ).normalized
     }
 
@@ -938,7 +1130,8 @@ struct SettingsView: View {
 }
 
 struct AccountRowView: View {
-    private static let chatGPTGuideURL = URL(string: "https://github.com/SalmonC/ApiUsageTrackerForMac/blob/main/Docs/ACCOUNT_CREDENTIALS_GUIDE.md")!
+    private static let deepSeekKeysURL = URL(string: "https://platform.deepseek.com/api_keys")!
+    private static let codexLoginURL = URL(string: "https://developers.openai.com/codex/cli/")!
     @Binding var account: APIAccount
     @Binding var isExpanded: Bool
     var isEditingName: Bool
@@ -949,6 +1142,7 @@ struct AccountRowView: View {
     var onNameEditCommitted: () -> Void
     var onProviderChanged: ((APIProvider, APIProvider) -> Void)?
     var language: AppLanguage = .chinese
+    @State private var isCredentialGuideExpanded = true
     
     var body: some View {
         VStack(alignment: .leading, spacing: isExpanded ? 14 : 0) {
@@ -957,9 +1151,15 @@ struct AccountRowView: View {
                     Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(.secondary)
-                        .frame(width: 20, height: 20)
+                        .frame(width: 26, height: 26)
+                        .background(Color.secondary.opacity(0.08))
+                        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .frame(width: 30, height: 30)
+                .contentShape(Rectangle())
+                .help(language == .english ? "Expand/collapse account" : "展开/合上账号")
 
                 if isExpanded {
                     nameEditorOrLabel
@@ -1006,44 +1206,49 @@ struct AccountRowView: View {
                         Text(language == .english ? "Provider" : "供应商")
                             .font(.caption2)
                             .foregroundColor(.secondary)
-                        Picker(language == .english ? "Provider" : "供应商", selection: $account.provider) {
+                        Menu {
                             ForEach(providerOptions) { provider in
-                                Text(providerOptionLabel(provider)).tag(provider)
+                                Button {
+                                    selectProvider(provider)
+                                } label: {
+                                    if provider == account.provider {
+                                        Label(providerOptionLabel(provider), systemImage: "checkmark")
+                                    } else {
+                                        Text(providerOptionLabel(provider))
+                                    }
+                                }
                             }
+                        } label: {
+                            HStack {
+                                Label(account.provider.displayName, systemImage: account.provider.icon)
+                                Spacer()
+                                Image(systemName: "chevron.up.chevron.down")
+                                    .font(.caption2)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         }
-                        .labelsHidden()
-                        .onChange(of: account.provider) { oldValue, newValue in
-                            onNameEditCommitted()
-                            onProviderChanged?(oldValue, newValue)
-                        }
+                        .menuStyle(.borderlessButton)
+                        .frame(maxWidth: .infinity)
                     }
 
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(apiKeyPlaceholder)
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                        SecureField(apiKeyPlaceholder, text: $account.apiKey)
-                            .textFieldStyle(.roundedBorder)
-                    }
-                    
-                    if account.provider == .chatGPT {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(
-                                language == .english
-                                ? "Paste ChatGPT Web accessToken or full session cookie (accessToken will be exchanged automatically)"
-                                : "粘贴 ChatGPT Web accessToken，或完整 session cookie（将自动换取 accessToken）"
-                            )
+                    if account.provider.requiresCredential {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(apiKeyPlaceholder)
                                 .font(.caption2)
                                 .foregroundColor(.secondary)
-                            
-                            Link(destination: Self.chatGPTGuideURL) {
-                                Label(language == .english ? "How to get ChatGPT credentials?" : "如何获取 ChatGPT 凭证？", systemImage: "questionmark.circle")
-                                    .font(.caption)
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
+                            SecureField(apiKeyPlaceholder, text: $account.apiKey)
+                                .textFieldStyle(.roundedBorder)
                         }
+                    } else {
+                        Label(
+                            language == .english ? "No credential is pasted here; QuotaPulse uses your local Codex login." : "这里无需粘贴凭证；QuotaPulse 会读取本机 Codex 登录状态。",
+                            systemImage: "checkmark.shield"
+                        )
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                     }
+
+                    credentialGuide
                     
                     Divider()
                     TestConnectionButton(account: $account, language: language)
@@ -1107,10 +1312,10 @@ struct AccountRowView: View {
     
     private var apiKeyPlaceholder: String {
         switch account.provider {
-        case .chatGPT:
+        case .openAI:
             return language == .english
-                ? "ChatGPT Access Token / Session Cookie"
-                : "ChatGPT Access Token / Session Cookie"
+                ? "OpenAI Admin Key"
+                : "OpenAI Admin Key"
         default:
             return "API Key"
         }
@@ -1121,6 +1326,116 @@ struct AccountRowView: View {
             return APIProvider.selectableForNewAccounts
         }
         return APIProvider.selectableForNewAccounts + [account.provider]
+    }
+
+    private func selectProvider(_ provider: APIProvider) {
+        guard provider != account.provider else { return }
+        let oldProvider = account.provider
+        onNameEditCommitted()
+        account.provider = provider
+        account.apiKey = ""
+        if provider == .deepSeek || provider == .codex {
+            isCredentialGuideExpanded = true
+        }
+        onProviderChanged?(oldProvider, provider)
+    }
+
+    @ViewBuilder
+    private var credentialGuide: some View {
+        if account.provider == .deepSeek || account.provider == .openAI || account.provider == .miniMax || account.provider == .tavily || account.provider == .kimi || account.provider == .codex {
+            DisclosureGroup(isExpanded: $isCredentialGuideExpanded) {
+                VStack(alignment: .leading, spacing: 7) {
+                    Text(credentialGuideText)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let url = credentialGuideURL {
+                        Link(destination: url) {
+                            Label(credentialGuideLinkText, systemImage: "arrow.up.right.square")
+                                .font(.caption)
+                        }
+                    }
+                }
+                .padding(.top, 7)
+            } label: {
+                Label(language == .english ? "How to connect" : "如何连接", systemImage: "key.horizontal")
+                    .font(.caption.weight(.semibold))
+            }
+            .padding(10)
+            .background(Color.accentColor.opacity(0.07))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+    }
+
+    private var credentialGuideText: String {
+        switch account.provider {
+        case .deepSeek:
+            return language == .english
+                ? "Sign in to DeepSeek, create an API key on the API Keys page, copy the complete key, and paste it into the API Key field above."
+                : "登录 DeepSeek，在 API Keys 页面创建密钥，复制完整 API Key，并粘贴到上方 API Key 输入框。"
+        case .openAI:
+            return language == .english
+                ? "Create an organization Admin Key in OpenAI platform settings. The standard project API key is not enough for the official Costs API."
+                : "在 OpenAI 平台组织设置中创建 Admin Key。普通项目 API Key 不能调用官方 Costs API。"
+        case .miniMax:
+            return language == .english
+                ? "Use the API key for the MiniMax account that has an active Token Plan subscription. QuotaPulse calls MiniMax's official Token Plan remains endpoint."
+                : "填写已开通 MiniMax Token Plan 的账号 API Key；QuotaPulse 调用官方 Token Plan 余量接口。"
+        case .tavily:
+            return language == .english
+                ? "Copy your Tavily API key from the Tavily dashboard and paste the complete key above."
+                : "从 Tavily 控制台复制完整 API Key，并粘贴到上方输入框。"
+        case .kimi:
+            return language == .english
+                ? "Copy your Moonshot/Kimi API key from the Moonshot platform. QuotaPulse uses the official balance endpoint."
+                : "从 Moonshot/Kimi 平台复制完整 API Key；QuotaPulse 使用官方余额接口查询。"
+        case .codex:
+            return language == .english
+                ? "Install Codex CLI, run “codex login” in Terminal, and complete sign-in. QuotaPulse reads the local Codex usage record; nothing needs to be pasted here."
+                : "安装 Codex CLI 后，在终端运行“codex login”并完成登录；QuotaPulse 读取本机 Codex 用量记录，这里无需粘贴任何内容。"
+        case .glm, .chatGPT:
+            return language == .english
+                ? "This monitoring method has been removed because it is not backed by a stable official API."
+                : "该监控方案已删除，因为没有稳定的官方 API 接口支撑。"
+        }
+    }
+
+    private var credentialGuideURL: URL? {
+        switch account.provider {
+        case .deepSeek:
+            return Self.deepSeekKeysURL
+        case .openAI:
+            return URL(string: "https://platform.openai.com/settings/organization/admin-keys")
+        case .miniMax:
+            return URL(string: "https://www.minimax.io/platform")
+        case .tavily:
+            return URL(string: "https://app.tavily.com/home")
+        case .kimi:
+            return URL(string: "https://platform.moonshot.cn/console/api-keys")
+        case .codex:
+            return Self.codexLoginURL
+        case .glm, .chatGPT:
+            return nil
+        }
+    }
+
+    private var credentialGuideLinkText: String {
+        switch account.provider {
+        case .deepSeek:
+            return language == .english ? "Open DeepSeek API Keys" : "打开 DeepSeek API Keys"
+        case .openAI:
+            return language == .english ? "Open OpenAI Admin Keys" : "打开 OpenAI Admin Keys"
+        case .miniMax:
+            return language == .english ? "Open MiniMax platform" : "打开 MiniMax 平台"
+        case .tavily:
+            return language == .english ? "Open Tavily dashboard" : "打开 Tavily 控制台"
+        case .kimi:
+            return language == .english ? "Open Moonshot API Keys" : "打开 Moonshot API Keys"
+        case .codex:
+            return language == .english ? "Open Codex CLI guide" : "打开 Codex CLI 指南"
+        case .glm, .chatGPT:
+            return language == .english ? "Unsupported" : "不支持"
+        }
     }
 
     private func providerOptionLabel(_ provider: APIProvider) -> String {
@@ -1356,7 +1671,7 @@ struct TestConnectionButton: View {
         NSApp.keyWindow?.makeFirstResponder(nil)
 
         let credential = account.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !credential.isEmpty else {
+        guard !account.provider.requiresCredential || !credential.isEmpty else {
             testResult = .failure(
                 summary: language == .english ? "Please enter credential first" : "请先输入凭证",
                 details: nil
@@ -1420,6 +1735,7 @@ struct TestConnectionButton: View {
             }
         }
     }
+
     
     private func iconForResult(_ result: TestResult) -> String {
         switch result {
@@ -1465,7 +1781,31 @@ struct TestConnectionButton: View {
                 return lang == .english
                     ? "Type: Missing credential\nPlease input API key/token and retry."
                     : "类型：缺少凭证\n请先输入 API Key/Token 后重试。"
-            case .httpError(let code), .httpErrorWithMessage(let code, _):
+            case .httpErrorWithMessage(let code, let message):
+                if code < 0 {
+                    return lang == .english
+                        ? "Type: Provider/API failure\n\(message)"
+                        : "类型：供应商接口失败\n\(message)"
+                }
+                if code == 401 || code == 403 {
+                    return lang == .english
+                        ? "Type: Authentication failed (HTTP \(code))\nCredential is invalid, expired, or has insufficient permissions."
+                        : "类型：鉴权失败（HTTP \(code)）\n凭证无效、已过期或权限不足。"
+                }
+                if code == 429 {
+                    return lang == .english
+                        ? "Type: Rate limited (HTTP 429)\nPlease retry later."
+                        : "类型：触发频率限制（HTTP 429）\n请稍后重试。"
+                }
+                if code >= 500 {
+                    return lang == .english
+                        ? "Type: Provider service error (HTTP \(code))\nThis is usually temporary."
+                        : "类型：供应商服务异常（HTTP \(code)）\n通常为临时问题。"
+                }
+                return lang == .english
+                    ? "Type: API request failed (HTTP \(code))\n\(error.localizedDescription)"
+                    : "类型：接口请求失败（HTTP \(code)）\n\(error.localizedDescription)"
+            case .httpError(let code):
                 if code == 401 || code == 403 {
                     return lang == .english
                         ? "Type: Authentication failed (HTTP \(code))\nCredential is invalid, expired, or has insufficient permissions."

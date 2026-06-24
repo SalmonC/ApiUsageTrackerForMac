@@ -35,10 +35,7 @@ struct MainView: View {
             } else if viewModel.usageData.isEmpty {
                 emptyView
             } else {
-                VStack(spacing: 0) {
-                    summaryBar
-                    usageListView
-                }
+                usageListView
             }
             
             Divider()
@@ -100,6 +97,16 @@ struct MainView: View {
             Text("QuotaPulse")
                 .font(.headline)
             Spacer()
+            if !viewModel.usageData.isEmpty {
+                summaryChip(
+                    text: viewModel.failedAccountCount > 0
+                        ? (language == .english ? "\(viewModel.failedAccountCount) issues" : "\(viewModel.failedAccountCount) 异常")
+                        : (language == .english ? "All healthy" : "全部正常"),
+                    icon: viewModel.failedAccountCount > 0 ? "exclamationmark.triangle.fill" : "checkmark.circle.fill",
+                    color: viewModel.failedAccountCount > 0 ? .orange : .green
+                )
+                .font(.caption)
+            }
             Button(action: {
                 Task {
                     await viewModel.refreshAll()
@@ -163,76 +170,6 @@ struct MainView: View {
         .frame(height: 200)
     }
 
-    private var summaryBar: some View {
-        HStack(spacing: 10) {
-            summaryChip(
-                text: language == .english ? "\(viewModel.usageData.count) items" : "\(viewModel.usageData.count)项",
-                icon: "tray.full",
-                color: .secondary
-            )
-
-            summaryChip(
-                text: viewModel.failedAccountCount > 0
-                    ? (language == .english ? "\(viewModel.failedAccountCount) issues" : "\(viewModel.failedAccountCount) 异常")
-                    : (language == .english ? "All healthy" : "全部正常"),
-                icon: viewModel.failedAccountCount > 0 ? "exclamationmark.triangle.fill" : "checkmark.circle.fill",
-                color: viewModel.failedAccountCount > 0 ? .orange : .green
-            )
-
-            Spacer()
-
-            Menu {
-                ForEach(DashboardSortMode.allCases) { mode in
-                    Button {
-                        viewModel.setDashboardSortMode(mode)
-                    } label: {
-                        HStack {
-                            Text(mode.displayName(language: language))
-                            if mode == viewModel.dashboardSortMode {
-                                Image(systemName: "checkmark")
-                            }
-                        }
-                    }
-                }
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: sortModeIconName(viewModel.dashboardSortMode))
-                    Text(viewModel.dashboardSortMode.displayName(language: language))
-                }
-            }
-            .menuStyle(.borderlessButton)
-
-            if viewModel.settings.showTrendInDashboard {
-                Menu {
-                    ForEach(TrendWindow.allCases) { window in
-                        Button {
-                            viewModel.trendWindow = window
-                        } label: {
-                            HStack {
-                                Text(window.displayName(language: language))
-                                if window == viewModel.trendWindow {
-                                    Image(systemName: "checkmark")
-                                }
-                            }
-                        }
-                    }
-                }
-                label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "chart.line.uptrend.xyaxis")
-                        Text(viewModel.trendWindow.displayName(language: language))
-                    }
-                }
-                .menuStyle(.borderlessButton)
-            }
-        }
-        .font(.caption)
-        .padding(.horizontal, 12)
-        .padding(.top, 8)
-        .padding(.bottom, 6)
-        .measureHeight(for: .summary)
-    }
-    
     private var usageListView: some View {
         ScrollViewReader { scrollProxy in
             ScrollView(.vertical, showsIndicators: false) {
@@ -242,10 +179,11 @@ struct MainView: View {
                             data: data,
                             language: language,
                             isDashboardVisible: viewModel.isDashboardVisible,
-                            showTrend: viewModel.settings.showTrendInDashboard,
-                            trendPoints: viewModel.trendPoints(for: data.accountId, window: viewModel.trendWindow),
+                            showTrend: viewModel.settings.showTrendInDashboard && data.provider == .deepSeek,
+                            deepSeekBalanceTrendPoints: viewModel.deepSeekBalanceTrendPoints(for: data.accountId, window: viewModel.trendWindow),
                             trendWindow: viewModel.trendWindow,
                             confidence: viewModel.dataConfidence(for: data),
+                            deepSeekBalanceThreshold: viewModel.settings.deepSeekBalanceSettings.threshold,
                             isRefreshing: viewModel.refreshingAccountIDs.contains(data.accountId),
                             canManualReorder: viewModel.dashboardSortMode == .manual,
                             isDragSource: draggedAccountID == data.accountId,
@@ -339,19 +277,6 @@ struct MainView: View {
         .clipShape(Capsule())
     }
 
-    private func sortModeIconName(_ mode: DashboardSortMode) -> String {
-        switch mode {
-        case .manual:
-            return "line.3.horizontal.circle"
-        case .risk:
-            return "exclamationmark.shield"
-        case .provider:
-            return "square.grid.2x2"
-        case .name:
-            return "textformat.abc"
-        }
-    }
-    
     private static let timeFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.timeStyle = .short
@@ -538,9 +463,10 @@ private struct UsageRowView: View {
     let language: AppLanguage
     let isDashboardVisible: Bool
     let showTrend: Bool
-    let trendPoints: [UsageTrendPoint]
+    let deepSeekBalanceTrendPoints: [DeepSeekBalanceTrendPoint]
     let trendWindow: TrendWindow
     let confidence: DataConfidence
+    let deepSeekBalanceThreshold: Double
     var isRefreshing: Bool = false
     var canManualReorder: Bool = false
     var isDragSource: Bool = false
@@ -557,7 +483,9 @@ private struct UsageRowView: View {
                     errorRow(error)
                 } else {
                     quotaCycleRows
-                    trendRow
+                    if data.provider == .deepSeek {
+                        deepSeekBalanceTrendRow
+                    }
                 }
             }
 
@@ -613,10 +541,14 @@ private struct UsageRowView: View {
                             .foregroundColor(.secondary)
                             .lineLimit(1)
 
-                        confidenceBadge
+                        if shouldShowConfidenceBadge {
+                            confidenceBadge
+                        }
                     }
                 } else {
-                    confidenceBadge
+                    if shouldShowConfidenceBadge {
+                        confidenceBadge
+                    }
                 }
             }
 
@@ -657,15 +589,11 @@ private struct UsageRowView: View {
                 tint: ringColor(for: remainingPercent),
                 language: language
             )
-        } else if let plan = data.displaySubscriptionPlan, data.provider == .chatGPT {
-            Text(plan)
-                .font(.caption)
+        } else if (data.provider == .deepSeek || data.provider == .kimi || data.provider == .openAI), let balance = data.currencyBalances.first {
+            Text(formatCurrency(balance.total, currency: balance.currency))
+                .font(.system(.headline, design: .rounded))
                 .fontWeight(.semibold)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Color.green.opacity(0.14))
-                .foregroundColor(.green)
-                .cornerRadius(6)
+                .foregroundColor(data.provider == .deepSeek ? deepSeekBalanceColor(for: balance.total) : remainingColor)
         } else if data.tokenRemaining != nil {
             Text(data.displayRemaining)
                 .font(.system(.headline, design: .rounded))
@@ -703,7 +631,19 @@ private struct UsageRowView: View {
 
     @ViewBuilder
     private var quotaCycleRows: some View {
-        if quotaCycles.isEmpty {
+        if data.provider == .deepSeek, !data.currencyBalances.isEmpty {
+            VStack(alignment: .leading, spacing: 5) {
+                ForEach(data.currencyBalances) { balance in
+                    deepSeekBalanceRow(balance)
+                }
+            }
+        } else if data.provider == .codex, quotaCycles.count >= 2 {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(dualRingCycles.prefix(2)) { cycle in
+                    codexResetRow(cycle)
+                }
+            }
+        } else if quotaCycles.isEmpty {
             Text(language == .english ? "No usage data yet" : "暂无用量统计")
                 .font(.caption)
                 .foregroundColor(.secondary)
@@ -716,53 +656,166 @@ private struct UsageRowView: View {
         }
     }
 
-    @ViewBuilder
-    private var trendRow: some View {
-        if showTrend, trendPoints.count >= 2 {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    Image(systemName: "waveform.path.ecg")
+    private func codexResetRow(_ cycle: QuotaCycle) -> some View {
+        HStack(alignment: .center, spacing: 6) {
+            if let label = cycleLabel(for: cycle) {
+                Text(label)
+                    .font(.caption2)
+                    .fontWeight(.semibold)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(providerColor.opacity(0.14))
+                    .foregroundColor(providerColor)
+                    .cornerRadius(5)
+            }
+
+            if let reset = cycle.reset {
+                ResetCountdownLine(
+                    resetAt: reset,
+                    language: language,
+                    isEstimated: cycle.isResetEstimated,
+                    resetVerb: resetVerb(for: cycle),
+                    isActive: isDashboardVisible
+                )
+            } else {
+                Text(language == .english ? "Reset time unavailable" : "重置时间未知")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+        }
+    }
+
+    private func deepSeekBalanceRow(_ balance: CurrencyBalance) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 6) {
+                Text(balance.currency)
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                if shouldShowBalanceBreakdown(balance) {
+                    Text(language == .english
+                         ? "Top-up \(formatCurrency(balance.toppedUp, currency: balance.currency)) · Granted \(formatCurrency(balance.granted, currency: balance.currency))"
+                         : "充值 \(formatCurrency(balance.toppedUp, currency: balance.currency)) · 赠送 \(formatCurrency(balance.granted, currency: balance.currency))")
                         .font(.caption2)
                         .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+                if let consumed = balance.estimatedConsumption {
                     Text(language == .english
-                         ? "Trend \(trendWindow.displayName(language: language))"
-                         : "趋势 \(trendWindow.displayName(language: language))")
+                         ? "Δ \(formatSignedCurrency(-consumed, currency: balance.currency))"
+                         : "变化 \(formatSignedCurrency(-consumed, currency: balance.currency))")
+                        .font(.caption2)
+                        .foregroundColor(.orange)
+                        .lineLimit(1)
+                }
+            }
+        }
+    }
+
+    private func shouldShowBalanceBreakdown(_ balance: CurrencyBalance) -> Bool {
+        abs(balance.granted) > 0.000_001 || abs(balance.toppedUp - balance.total) > 0.000_001
+    }
+
+    private func formatCurrency(_ value: Double, currency: String) -> String {
+        let symbol: String
+        switch currency.uppercased() {
+        case "CNY": symbol = "¥"
+        case "USD": symbol = "$"
+        default: symbol = "\(currency.uppercased()) "
+        }
+        return symbol + String(format: "%.2f", value)
+    }
+
+    private func formatSignedCurrency(_ value: Double, currency: String) -> String {
+        if value > 0.000_001 {
+            return "+" + formatCurrency(value, currency: currency)
+        }
+        if value < -0.000_001 {
+            return "-" + formatCurrency(abs(value), currency: currency)
+        }
+        return formatCurrency(0, currency: currency)
+    }
+
+    private func deltaColor(_ delta: Double?) -> Color {
+        guard let delta else { return .secondary }
+        if delta > 0.000_001 { return .green }
+        if delta < -0.000_001 { return .red }
+        return .secondary
+    }
+
+    private func deepSeekChartDomain() -> (start: Date, end: Date) {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let effectiveDays = max(trendWindow.days, 1)
+        let start = calendar.date(byAdding: .day, value: -(effectiveDays - 1), to: today) ?? today
+        let end = calendar.date(byAdding: .day, value: 1, to: today) ?? today.addingTimeInterval(86_400)
+        return (start, end)
+    }
+
+    private func deepSeekYDomain() -> ClosedRange<Double> {
+        let values = deepSeekBalanceTrendPoints.map(\.balance)
+        guard let minValue = values.min(), let maxValue = values.max() else {
+            return 0...1
+        }
+        if abs(maxValue - minValue) < 0.000_001 {
+            let padding = max(1, abs(maxValue) * 0.12)
+            return max(0, minValue - padding)...(maxValue + padding)
+        }
+        let padding = max((maxValue - minValue) * 0.18, 0.5)
+        return max(0, minValue - padding)...(maxValue + padding)
+    }
+
+    private func shortDateLabel(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = language == .english ? Locale(identifier: "en_US_POSIX") : Locale(identifier: "zh_CN")
+        formatter.dateFormat = "M/d"
+        return formatter.string(from: date)
+    }
+
+    @ViewBuilder
+    private var deepSeekBalanceTrendRow: some View {
+        if showTrend, !deepSeekBalanceTrendPoints.isEmpty {
+            let chartDomain = deepSeekChartDomain()
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Image(systemName: "chart.xyaxis.line")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    Text(language == .english ? "Balance trend" : "余额趋势")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                     Spacer(minLength: 0)
-                    if let latest = trendPoints.last?.usagePercent {
-                        Text(formatPercent(latest))
-                            .font(.caption2)
-                            .foregroundColor(ringColor(for: 100 - latest))
-                    }
+                    Text(trendWindow.displayName(language: language))
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
                 }
 
-                Chart(trendPoints) { point in
+                Chart(deepSeekBalanceTrendPoints) { point in
                     LineMark(
-                        x: .value("Time", point.timestamp),
-                        y: .value("Usage", point.usagePercent)
+                        x: .value("Day", point.day),
+                        y: .value("Balance", point.balance)
                     )
-                    .interpolationMethod(.catmullRom)
+                    .interpolationMethod(.linear)
                     .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
                     .foregroundStyle(providerColor.gradient)
 
-                    AreaMark(
-                        x: .value("Time", point.timestamp),
-                        y: .value("Usage", point.usagePercent)
+                    PointMark(
+                        x: .value("Day", point.day),
+                        y: .value("Balance", point.balance)
                     )
-                    .interpolationMethod(.catmullRom)
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [
-                                providerColor.opacity(0.18),
-                                providerColor.opacity(0.02)
-                            ],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
+                    .symbolSize(28)
+                    .foregroundStyle(deltaColor(point.deltaFromPrevious))
+                    .annotation(position: .top, spacing: 2) {
+                        if let delta = point.deltaFromPrevious {
+                            Text(formatSignedCurrency(delta, currency: point.currency))
+                                .font(.system(size: 8, weight: .semibold))
+                                .foregroundColor(deltaColor(delta))
+                                .monospacedDigit()
+                                .lineLimit(1)
+                        }
+                    }
                 }
-                .chartYScale(domain: 0...100)
+                .chartXScale(domain: chartDomain.start...chartDomain.end)
+                .chartYScale(domain: deepSeekYDomain())
                 .chartXAxis(.hidden)
                 .chartYAxis(.hidden)
                 .chartPlotStyle { plot in
@@ -770,7 +823,15 @@ private struct UsageRowView: View {
                         .background(providerColor.opacity(0.04))
                         .cornerRadius(6)
                 }
-                .frame(height: 30)
+                .frame(height: 54)
+
+                HStack {
+                    Text(shortDateLabel(chartDomain.start))
+                    Spacer()
+                    Text(shortDateLabel(chartDomain.end.addingTimeInterval(-1)))
+                }
+                .font(.system(size: 8))
+                .foregroundColor(.secondary)
             }
         }
     }
@@ -859,14 +920,25 @@ private struct UsageRowView: View {
         case .openAI:
             return .teal
         case .chatGPT:
-            return .pink
+            return .gray
         case .kimi:
             return .indigo
+        case .deepSeek:
+            return .blue
+        case .codex:
+            return .orange
         }
     }
 
     private var shouldShowProviderSubtitle: Bool {
         normalizedLabel(data.accountName) != normalizedLabel(data.provider.displayName)
+    }
+
+    private var shouldShowConfidenceBadge: Bool {
+        if data.provider == .codex || data.provider == .deepSeek {
+            return false
+        }
+        return data.errorMessage != nil || confidence.level == .medium || confidence.level == .low
     }
 
     private func normalizedLabel(_ text: String) -> String {
@@ -889,6 +961,9 @@ private struct UsageRowView: View {
     }
 
     private var remainingColor: Color {
+        if data.provider == .deepSeek, let balance = data.currencyBalances.first {
+            return deepSeekBalanceColor(for: balance.total)
+        }
         if data.tokenTotal != nil && data.tokenTotal! > 0 {
             let pct = data.usagePercentage
             if pct > 90 {
@@ -900,6 +975,10 @@ private struct UsageRowView: View {
             }
         }
         return .green
+    }
+
+    private func deepSeekBalanceColor(for balance: Double) -> Color {
+        balance < deepSeekBalanceThreshold ? .red : .green
     }
     
     private func formatValue(_ value: Double) -> String {
@@ -936,6 +1015,8 @@ private struct UsageRowView: View {
             return .orange
         case .low:
             return .red
+        case .balance:
+            return .blue
         case .unknown:
             return .secondary
         }
@@ -1017,13 +1098,6 @@ private struct UsageRowView: View {
     }
 
     private func cycleLabel(for cycle: QuotaCycle) -> String? {
-        if data.provider == .chatGPT,
-           cycle.used == nil,
-           cycle.total == nil,
-           cycle.remaining == nil {
-            return language == .english ? "Subscription" : "订阅"
-        }
-
         guard quotaCycles.count > 1 else { return nil }
         if let shortSource = shortCycleSource {
             return cycle.source == shortSource
@@ -1055,13 +1129,6 @@ private struct UsageRowView: View {
     }
 
     private func cycleUsageText(_ cycle: QuotaCycle) -> String {
-        if data.provider == .chatGPT,
-           cycle.used == nil,
-           cycle.total == nil,
-           cycle.remaining == nil {
-            return language == .english ? "Status normal" : "状态正常"
-        }
-
         if data.provider == .kimi, cycle.isPercentageOnly {
             return ""
         }
@@ -1102,12 +1169,6 @@ private struct UsageRowView: View {
     }
 
     private func resetVerb(for cycle: QuotaCycle) -> String {
-        if data.provider == .chatGPT,
-           cycle.used == nil,
-           cycle.total == nil,
-           cycle.remaining == nil {
-            return language == .english ? "renews" : "续期"
-        }
         return language == .english ? "resets" : "重置"
     }
 
@@ -1121,7 +1182,7 @@ private struct UsageRowView: View {
 
     private func ringSortWeight(_ cycle: QuotaCycle) -> Int {
         if let shortSource = shortCycleSource {
-            return cycle.source == shortSource ? 1 : 0
+            return cycle.source == shortSource ? 0 : 1
         }
         return cycle.source == .primary ? 0 : 1
     }
@@ -1232,7 +1293,7 @@ private struct ResetCountdownLine: View {
     let isActive: Bool
 
     @State private var now = Date()
-    private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+    private let timer = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
 
     var body: some View {
         if let countdown = countdownString(now: now) {

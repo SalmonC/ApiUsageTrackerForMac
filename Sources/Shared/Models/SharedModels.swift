@@ -15,6 +15,8 @@ enum APIProvider: String, Codable, CaseIterable, Identifiable {
     case openAI = "openAI"
     case chatGPT = "chatGPT"
     case kimi = "kimi"
+    case deepSeek = "deepSeek"
+    case codex = "codex"
     
     var id: String { rawValue }
     
@@ -32,6 +34,10 @@ enum APIProvider: String, Codable, CaseIterable, Identifiable {
             return "ChatGPT (Subscription)"
         case .kimi:
             return "KIMI (Moonshot)"
+        case .deepSeek:
+            return "DeepSeek"
+        case .codex:
+            return "Codex (ChatGPT)"
         }
     }
     
@@ -49,24 +55,23 @@ enum APIProvider: String, Codable, CaseIterable, Identifiable {
             return "message.badge"
         case .kimi:
             return "moon.stars"
+        case .deepSeek:
+            return "drop.triangle"
+        case .codex:
+            return "terminal"
         }
     }
 
     var supportsRemainingQuotaQuery: Bool {
-        switch self {
-        case .glm:
-            return false
-        default:
-            return true
-        }
+        Self.supportedMonitoringProviders.contains(self)
     }
 
     func remainingQuotaQueryUnsupportedReason(language: AppLanguage) -> String? {
         switch self {
-        case .glm:
+        case .glm, .chatGPT:
             return language == .english
-                ? "GLM does not currently provide a stable API-key endpoint for direct remaining quota lookup; some endpoints only return status without usable quota fields."
-                : "智谱当前未公开可通过 API Key 直接查询账户余额/Token 余量的稳定接口；现有监控端点会返回成功状态但不包含有效数据。"
+                ? "This monitoring method has been removed because it is not backed by a stable official API endpoint."
+                : "该监控方案已删除，因为没有稳定的官方 API 接口支撑。"
         default:
             return nil
         }
@@ -74,20 +79,26 @@ enum APIProvider: String, Codable, CaseIterable, Identifiable {
 
     func capabilityDescription(language: AppLanguage) -> String? {
         switch self {
-        case .glm:
-            return remainingQuotaQueryUnsupportedReason(language: language)
-        case .chatGPT:
-            return language == .english
-                ? "Supports subscription status and renewal time only; remaining token/quota cannot be queried via accessToken."
-                : "仅支持订阅状态与续期时间查询；无法通过 accessToken 查询可用 Token/额度余量。"
         case .tavily:
             return language == .english
                 ? "Remaining quota is available, but official API usually does not provide a stable reset timestamp."
                 : "可查询额度余量；官方接口通常不返回稳定的周期重置时间。"
         case .kimi:
             return language == .english
-                ? "Primarily returns cycle percentages; dashboard renders long/short cycle percentages."
-                : "主要返回周期百分比信息；看板将以长/短周期百分比方式展示。"
+                ? "Uses Moonshot's official balance endpoint and displays available balance."
+                : "使用 Moonshot 官方余额接口，展示可用余额。"
+        case .deepSeek:
+            return language == .english
+                ? "Shows every currency returned by DeepSeek, including topped-up and granted balances. Consumption is estimated from balance changes."
+                : "展示 DeepSeek 实际返回的全部币种及充值/赠送余额；消耗量根据余额变化估算。"
+        case .openAI:
+            return language == .english
+                ? "Uses the official organization Costs API; an OpenAI Admin Key is required."
+                : "使用官方组织 Costs API；需要 OpenAI Admin Key。"
+        case .codex:
+            return language == .english
+                ? "Reads your local Codex login and displays the 5-hour and weekly quota windows."
+                : "读取本机 Codex 登录状态，显示 5 小时与每周额度周期。"
         default:
             return nil
         }
@@ -99,7 +110,13 @@ enum APIProvider: String, Codable, CaseIterable, Identifiable {
     }
 
     static var selectableForNewAccounts: [APIProvider] {
-        allCases.filter(\.supportsRemainingQuotaQuery)
+        supportedMonitoringProviders
+    }
+
+    var requiresCredential: Bool { self != .codex }
+
+    static var supportedMonitoringProviders: [APIProvider] {
+        [.miniMax, .tavily, .openAI, .kimi, .deepSeek, .codex]
     }
 
     static var unsupportedForRemainingQuotaQuery: [APIProvider] {
@@ -107,13 +124,12 @@ enum APIProvider: String, Codable, CaseIterable, Identifiable {
     }
 
     static var providersWithCapabilityDescription: [APIProvider] {
-        allCases.filter { $0.capabilityDescription(language: .chinese) != nil }
+        supportedMonitoringProviders.filter { $0.capabilityDescription(language: .chinese) != nil }
     }
 }
 
 enum DashboardSortMode: String, Codable, CaseIterable, Identifiable {
     case manual
-    case risk
     case provider
     case name
     
@@ -123,12 +139,54 @@ enum DashboardSortMode: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .manual:
             return language == .english ? "Manual" : "手动排序"
-        case .risk:
-            return language == .english ? "Risk First" : "风险优先"
         case .provider:
             return language == .english ? "By Provider" : "按平台"
         case .name:
             return language == .english ? "By Name" : "按名称"
+        }
+    }
+}
+
+enum TrendWindow: String, Codable, CaseIterable, Identifiable {
+    case day
+    case threeDays
+    case week
+    case twoWeeks
+    case month
+
+    var id: String { rawValue }
+
+    static var dashboardSelectable: [TrendWindow] {
+        [.threeDays, .week, .twoWeeks, .month]
+    }
+
+    var days: Int {
+        switch self {
+        case .day:
+            return 1
+        case .threeDays:
+            return 3
+        case .week:
+            return 7
+        case .twoWeeks:
+            return 14
+        case .month:
+            return 30
+        }
+    }
+
+    func displayName(language: AppLanguage) -> String {
+        switch self {
+        case .day:
+            return language == .english ? "24h" : "24小时"
+        case .threeDays:
+            return language == .english ? "3d" : "3天"
+        case .week:
+            return language == .english ? "7d" : "7天"
+        case .twoWeeks:
+            return language == .english ? "14d" : "14天"
+        case .month:
+            return language == .english ? "30d" : "30天"
         }
     }
 }
@@ -140,9 +198,6 @@ struct APIAccount: Codable, Identifiable, Equatable {
     var apiKey: String = ""
     var isEnabled: Bool = true
     
-    static func == (lhs: APIAccount, rhs: APIAccount) -> Bool {
-        lhs.id == rhs.id
-    }
 }
 
 struct HotkeySetting: Codable, Equatable {
@@ -223,9 +278,24 @@ struct ThresholdAlertSettings: Codable, Equatable {
 
     var normalized: ThresholdAlertSettings {
         var next = self
-        next.warningPercentage = min(max(next.warningPercentage, 1), 99)
-        next.criticalPercentage = min(max(next.criticalPercentage, next.warningPercentage + 1), 100)
+        next.warningPercentage = min(max(next.warningPercentage, 5), 100)
+        next.criticalPercentage = next.warningPercentage
         next.cooldownMinutes = min(max(next.cooldownMinutes, 5), 1_440)
+        return next
+    }
+}
+
+struct DeepSeekBalanceSettings: Codable, Equatable {
+    var threshold: Double = 1
+
+    static let `default` = DeepSeekBalanceSettings()
+
+    var normalized: DeepSeekBalanceSettings {
+        var next = self
+        if !next.threshold.isFinite {
+            next.threshold = 1
+        }
+        next.threshold = max(0, next.threshold)
         return next
     }
 }
@@ -236,7 +306,10 @@ struct AppSettings: Codable {
     var hotkey: HotkeySetting = HotkeySetting(keyCode: 32, modifiers: UInt32(NSEvent.ModifierFlags.command.rawValue | NSEvent.ModifierFlags.shift.rawValue))
     var language: AppLanguage = .chinese
     var alertSettings: ThresholdAlertSettings = .default
+    var deepSeekBalanceSettings: DeepSeekBalanceSettings = .default
     var showTrendInDashboard: Bool = true
+    var dashboardTrendWindow: TrendWindow = .week
+    var launchAtLogin: Bool = false
 
     init(
         accounts: [APIAccount] = [],
@@ -244,14 +317,20 @@ struct AppSettings: Codable {
         hotkey: HotkeySetting = HotkeySetting(keyCode: 32, modifiers: UInt32(NSEvent.ModifierFlags.command.rawValue | NSEvent.ModifierFlags.shift.rawValue)),
         language: AppLanguage = .chinese,
         alertSettings: ThresholdAlertSettings = .default,
-        showTrendInDashboard: Bool = true
+        deepSeekBalanceSettings: DeepSeekBalanceSettings = .default,
+        showTrendInDashboard: Bool = true,
+        dashboardTrendWindow: TrendWindow = .week,
+        launchAtLogin: Bool = false
     ) {
-        self.accounts = accounts
+        self.accounts = accounts.filter { $0.provider.supportsRemainingQuotaQuery }
         self.refreshInterval = refreshInterval
         self.hotkey = hotkey
         self.language = language
         self.alertSettings = alertSettings.normalized
+        self.deepSeekBalanceSettings = deepSeekBalanceSettings.normalized
         self.showTrendInDashboard = showTrendInDashboard
+        self.dashboardTrendWindow = TrendWindow.dashboardSelectable.contains(dashboardTrendWindow) ? dashboardTrendWindow : .week
+        self.launchAtLogin = launchAtLogin
     }
 
     enum CodingKeys: String, CodingKey {
@@ -260,12 +339,16 @@ struct AppSettings: Codable {
         case hotkey
         case language
         case alertSettings
+        case deepSeekBalanceSettings
         case showTrendInDashboard
+        case dashboardTrendWindow
+        case launchAtLogin
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        accounts = try container.decodeIfPresent([APIAccount].self, forKey: .accounts) ?? []
+        accounts = (try container.decodeIfPresent([APIAccount].self, forKey: .accounts) ?? [])
+            .filter { $0.provider.supportsRemainingQuotaQuery }
         refreshInterval = try container.decodeIfPresent(Int.self, forKey: .refreshInterval) ?? 5
         hotkey = try container.decodeIfPresent(HotkeySetting.self, forKey: .hotkey) ?? HotkeySetting(
             keyCode: 32,
@@ -273,7 +356,11 @@ struct AppSettings: Codable {
         )
         language = try container.decodeIfPresent(AppLanguage.self, forKey: .language) ?? .chinese
         alertSettings = (try container.decodeIfPresent(ThresholdAlertSettings.self, forKey: .alertSettings) ?? .default).normalized
+        deepSeekBalanceSettings = (try container.decodeIfPresent(DeepSeekBalanceSettings.self, forKey: .deepSeekBalanceSettings) ?? .default).normalized
         showTrendInDashboard = try container.decodeIfPresent(Bool.self, forKey: .showTrendInDashboard) ?? true
+        let decodedTrendWindow = try container.decodeIfPresent(TrendWindow.self, forKey: .dashboardTrendWindow) ?? .week
+        dashboardTrendWindow = TrendWindow.dashboardSelectable.contains(decodedTrendWindow) ? decodedTrendWindow : .week
+        launchAtLogin = try container.decodeIfPresent(Bool.self, forKey: .launchAtLogin) ?? false
     }
     
     static let `default` = AppSettings()
@@ -284,6 +371,16 @@ struct CycleLearningState: Codable, Equatable {
     var learnedInterval: TimeInterval? = nil
     var confidence: Double = 0
     var lastObservedAt: Date? = nil
+}
+
+struct CurrencyBalance: Codable, Equatable, Identifiable {
+    var currency: String
+    var total: Double
+    var granted: Double
+    var toppedUp: Double
+    var estimatedConsumption: Double? = nil
+
+    var id: String { currency }
 }
 
 struct UsageData: Codable, Equatable {
@@ -308,6 +405,9 @@ struct UsageData: Codable, Equatable {
     var secondaryCycleIsPercentage: Bool? = nil
     var primaryRefreshIsEstimated: Bool = false
     var secondaryRefreshIsEstimated: Bool = false
+    var balanceDetails: [CurrencyBalance]? = nil
+
+    var currencyBalances: [CurrencyBalance] { balanceDetails ?? [] }
     
     var displayRemaining: String {
         guard let remaining = tokenRemaining else { return "--" }
@@ -416,6 +516,8 @@ struct UsageSnapshot: Codable, Equatable, Identifiable {
     var monthlyTotal: Double?
     var usagePercentage: Double?
     var monthlyUsagePercentage: Double?
+    var balanceTotal: Double? = nil
+    var balanceCurrency: String? = nil
 }
 
 final class Storage {

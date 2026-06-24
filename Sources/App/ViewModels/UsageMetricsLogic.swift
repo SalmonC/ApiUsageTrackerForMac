@@ -1,45 +1,24 @@
 import Foundation
 
-enum TrendWindow: String, CaseIterable, Identifiable {
-    case day
-    case week
-    case month
-
-    var id: String { rawValue }
-
-    var days: Int {
-        switch self {
-        case .day:
-            return 1
-        case .week:
-            return 7
-        case .month:
-            return 30
-        }
-    }
-
-    func displayName(language: AppLanguage) -> String {
-        switch self {
-        case .day:
-            return language == .english ? "24h" : "24小时"
-        case .week:
-            return language == .english ? "7d" : "7天"
-        case .month:
-            return language == .english ? "30d" : "30天"
-        }
-    }
-}
-
 struct UsageTrendPoint: Identifiable, Equatable {
     var id: Date { timestamp }
     let timestamp: Date
     let usagePercent: Double
 }
 
+struct DeepSeekBalanceTrendPoint: Identifiable, Equatable {
+    var id: String { "\(currency)-\(day.timeIntervalSince1970)" }
+    let day: Date
+    let balance: Double
+    let currency: String
+    let deltaFromPrevious: Double?
+}
+
 enum DataConfidenceLevel: String {
     case high
     case medium
     case low
+    case balance
     case unknown
 
     func label(language: AppLanguage) -> String {
@@ -50,6 +29,8 @@ enum DataConfidenceLevel: String {
             return language == .english ? "Medium" : "中"
         case .low:
             return language == .english ? "Low" : "低"
+        case .balance:
+            return language == .english ? "Balance" : "余额"
         case .unknown:
             return language == .english ? "Unknown" : "未知"
         }
@@ -101,11 +82,82 @@ enum UsageMetricsLogic {
         return reduced
     }
 
+    static func deepSeekDailyBalancePoints(
+        accountSnapshots: [UsageSnapshot],
+        window: TrendWindow,
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) -> [DeepSeekBalanceTrendPoint] {
+        let effectiveDays = max(window.days, 1)
+        let today = calendar.startOfDay(for: now)
+        guard let startDay = calendar.date(byAdding: .day, value: -(effectiveDays - 1), to: today) else {
+            return []
+        }
+        guard let endExclusive = calendar.date(byAdding: .day, value: 1, to: today) else {
+            return []
+        }
+
+        let source = accountSnapshots
+            .filter {
+                $0.provider == .deepSeek &&
+                $0.capturedAt >= startDay &&
+                $0.capturedAt < endExclusive &&
+                $0.balanceTotal != nil &&
+                $0.balanceCurrency != nil
+            }
+            .sorted { $0.capturedAt < $1.capturedAt }
+
+        guard !source.isEmpty else { return [] }
+
+        var firstByDayAndCurrency: [String: UsageSnapshot] = [:]
+        for snapshot in source {
+            guard let currency = snapshot.balanceCurrency?.uppercased() else { continue }
+            let day = calendar.startOfDay(for: snapshot.capturedAt)
+            let key = "\(currency)-\(day.timeIntervalSince1970)"
+            if firstByDayAndCurrency[key] == nil {
+                firstByDayAndCurrency[key] = snapshot
+            }
+        }
+
+        let sortedFirstSnapshots = firstByDayAndCurrency.values.sorted {
+            if $0.balanceCurrency?.uppercased() != $1.balanceCurrency?.uppercased() {
+                return ($0.balanceCurrency ?? "") < ($1.balanceCurrency ?? "")
+            }
+            return $0.capturedAt < $1.capturedAt
+        }
+
+        var previousByCurrency: [String: Double] = [:]
+        return sortedFirstSnapshots.compactMap { snapshot in
+            guard
+                let balance = snapshot.balanceTotal,
+                let rawCurrency = snapshot.balanceCurrency
+            else { return nil }
+            let currency = rawCurrency.uppercased()
+            let delta = previousByCurrency[currency].map { balance - $0 }
+            previousByCurrency[currency] = balance
+            return DeepSeekBalanceTrendPoint(
+                day: calendar.startOfDay(for: snapshot.capturedAt),
+                balance: balance,
+                currency: currency,
+                deltaFromPrevious: delta
+            )
+        }
+    }
+
     static func dataConfidence(for data: UsageData, language: AppLanguage) -> DataConfidence {
         if data.errorMessage != nil {
             return DataConfidence(
                 level: .low,
                 reason: language == .english ? "Last refresh failed" : "最近一次刷新失败"
+            )
+        }
+
+        if data.provider == .deepSeek, !data.currencyBalances.isEmpty {
+            return DataConfidence(
+                level: .balance,
+                reason: language == .english
+                    ? "Direct balance data from provider"
+                    : "供应商直接返回的账户余额数据"
             )
         }
 
@@ -121,12 +173,6 @@ enum UsageMetricsLogic {
             return DataConfidence(
                 level: .medium,
                 reason: language == .english ? "Partially estimated reset cycle" : "部分刷新周期为估算"
-            )
-        }
-        if data.provider == .chatGPT {
-            return DataConfidence(
-                level: .medium,
-                reason: language == .english ? "Subscription-only status" : "仅订阅状态信息"
             )
         }
         return DataConfidence(

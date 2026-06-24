@@ -10,8 +10,6 @@ enum UsageDataSorting {
         switch mode {
         case .manual:
             return sortByManualOrder(data, manualOrder: manualOrder)
-        case .risk:
-            return sortByRisk(data)
         case .provider:
             return sortByProvider(data)
         case .name:
@@ -29,21 +27,6 @@ enum UsageDataSorting {
         }
     }
     
-    private static func sortByRisk(_ data: [UsageData]) -> [UsageData] {
-        return data.sorted { lhs, rhs in
-            let lRank = riskRank(for: lhs)
-            let rRank = riskRank(for: rhs)
-            if lRank != rRank { return lRank < rRank }
-            if abs(lhs.usagePercentage - rhs.usagePercentage) > .ulpOfOne {
-                return lhs.usagePercentage > rhs.usagePercentage
-            }
-            if abs(lhs.monthlyUsagePercentage - rhs.monthlyUsagePercentage) > .ulpOfOne {
-                return lhs.monthlyUsagePercentage > rhs.monthlyUsagePercentage
-            }
-            return lhs.accountName.localizedCaseInsensitiveCompare(rhs.accountName) == .orderedAscending
-        }
-    }
-    
     private static func sortByProvider(_ data: [UsageData]) -> [UsageData] {
         return data.sorted { lhs, rhs in
             if lhs.provider.displayName != rhs.provider.displayName {
@@ -57,24 +40,5 @@ enum UsageDataSorting {
         return data.sorted {
             $0.accountName.localizedCaseInsensitiveCompare($1.accountName) == .orderedAscending
         }
-    }
-    
-    static func riskRank(for data: UsageData) -> Int {
-        if data.errorMessage != nil { return 0 }
-        if data.tokenTotal != nil {
-            let pct = data.usagePercentage
-            if pct > 90 { return 1 }
-            if pct > 70 { return 2 }
-            if pct > 50 { return 3 }
-            return 4
-        }
-        if data.monthlyTotal != nil {
-            let pct = data.monthlyUsagePercentage
-            if pct > 90 { return 1 }
-            if pct > 70 { return 2 }
-            if pct > 50 { return 3 }
-            return 4
-        }
-        return 5
     }
 }
