@@ -1099,6 +1099,11 @@ private struct UsageRowView: View {
 
     private func cycleLabel(for cycle: QuotaCycle) -> String? {
         guard quotaCycles.count > 1 else { return nil }
+        if data.provider == .codex {
+            return cycle.source == .primary
+                ? (language == .english ? "5h" : "5小时")
+                : (language == .english ? "1w" : "1周")
+        }
         if let shortSource = shortCycleSource {
             return cycle.source == shortSource
                 ? (language == .english ? "Short" : "短周期")
@@ -1181,6 +1186,9 @@ private struct UsageRowView: View {
     }
 
     private func ringSortWeight(_ cycle: QuotaCycle) -> Int {
+        if data.provider == .codex {
+            return cycle.source == .primary ? 0 : 1
+        }
         if let shortSource = shortCycleSource {
             return cycle.source == shortSource ? 0 : 1
         }
