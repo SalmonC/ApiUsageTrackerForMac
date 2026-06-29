@@ -59,7 +59,7 @@ A macOS menu bar application for tracking API usage quotas from various AI provi
 #### From Release
 1. Download the latest `.dmg` from [Releases](https://github.com/SalmonC/ApiUsageTrackerForMac/releases)
 2. Open the `.dmg` file
-3. Drag `API Tracker.app` to Applications
+3. Drag `QuotaPulse.app` to Applications
 4. Launch the app
 
 #### From Source
@@ -75,8 +75,8 @@ xcodegen generate
 xcodebuild -project ApiUsageTrackerForMac.xcodeproj -scheme ApiUsageTrackerForMac -configuration Release build
 
 # Create DMG (optional)
-APP_PATH=~/Library/Developer/Xcode/DerivedData/ApiUsageTrackerForMac-*/Build/Products/Release/API\ Tracker.app
-hdiutil create -srcfolder "$APP_PATH" -volname "ApiUsageTrackerForMac" -fs HFS+ -format UDZO ApiUsageTrackerForMac.dmg
+APP_PATH=~/Library/Developer/Xcode/DerivedData/ApiUsageTrackerForMac-*/Build/Products/Release/QuotaPulse.app
+hdiutil create -srcfolder "$APP_PATH" -volname "QuotaPulse" -fs HFS+ -format UDZO QuotaPulse.dmg
 ```
 
 For Sparkle release/appcast workflow, see:
@@ -186,7 +186,7 @@ Optional environment variables:
 #### 从 Release 安装
 1. 从 [Releases](https://github.com/SalmonC/ApiUsageTrackerForMac/releases) 下载最新的 `.dmg` 文件
 2. 打开 `.dmg` 文件
-3. 将 `API Tracker.app` 拖到应用程序文件夹
+3. 将 `QuotaPulse.app` 拖到应用程序文件夹
 4. 启动应用
 
 #### 从源码编译
@@ -202,8 +202,8 @@ xcodegen generate
 xcodebuild -project ApiUsageTrackerForMac.xcodeproj -scheme ApiUsageTrackerForMac -configuration Release build
 
 # 创建 DMG（可选）
-APP_PATH=~/Library/Developer/Xcode/DerivedData/ApiUsageTrackerForMac-*/Build/Products/Release/API\ Tracker.app
-hdiutil create -srcfolder "$APP_PATH" -volname "ApiUsageTrackerForMac" -fs HFS+ -format UDZO ApiUsageTrackerForMac.dmg
+APP_PATH=~/Library/Developer/Xcode/DerivedData/ApiUsageTrackerForMac-*/Build/Products/Release/QuotaPulse.app
+hdiutil create -srcfolder "$APP_PATH" -volname "QuotaPulse" -fs HFS+ -format UDZO QuotaPulse.dmg
 ```
 
 Sparkle 发布 / appcast 流程见：

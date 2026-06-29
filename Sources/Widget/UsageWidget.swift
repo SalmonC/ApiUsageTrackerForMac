@@ -120,7 +120,7 @@ struct UsageWidgetEntryView: View {
     
     private var smallWidgetView: some View {
         VStack(alignment: .leading, spacing: 10) {
-            widgetHeader(title: "用量看板", compact: true)
+            widgetHeader(title: "QuotaPulse", compact: true)
             
             if let item = entry.usageData.first {
                 CompactUsageCard(data: item)
@@ -145,7 +145,7 @@ struct UsageWidgetEntryView: View {
     
     private var mediumWidgetView: some View {
         VStack(alignment: .leading, spacing: 10) {
-            widgetHeader(title: "API 用量看板", compact: false)
+            widgetHeader(title: "QuotaPulse 用量看板", compact: false)
             
             if entry.usageData.isEmpty {
                 emptyState(icon: "chart.bar.doc.horizontal", title: "暂无用量数据", subtitle: "在菜单栏应用中配置账号并刷新")
@@ -166,7 +166,7 @@ struct UsageWidgetEntryView: View {
     
     private var largeWidgetView: some View {
         VStack(alignment: .leading, spacing: 12) {
-            widgetHeader(title: "API 用量看板", compact: false)
+            widgetHeader(title: "QuotaPulse 用量看板", compact: false)
             
             if entry.usageData.isEmpty {
                 emptyState(icon: "tray.full", title: "还没有可展示的账号", subtitle: "请在应用设置中添加 API 账号")
@@ -188,9 +188,11 @@ struct UsageWidgetEntryView: View {
     @ViewBuilder
     private func widgetHeader(title: String, compact: Bool) -> some View {
         HStack(alignment: .center, spacing: 8) {
-            Image(systemName: "chart.bar.fill")
-                .font(.system(size: compact ? 12 : 13, weight: .semibold))
-                .foregroundStyle(.blue)
+            QuotaPulseMark(
+                size: compact ? 13 : 15,
+                ringColor: .primary,
+                pulseColor: WidgetVisuals.brandPulseColor
+            )
             Text(title)
                 .font(compact ? .caption : .subheadline)
                 .fontWeight(.semibold)
@@ -540,6 +542,8 @@ private func formatWidgetBalanceAmount(_ value: Double, currency: String) -> Str
 }
 
 private enum WidgetVisuals {
+    static let brandPulseColor = Color(red: 0.18, green: 0.86, blue: 0.79)
+
     static func providerColor(for provider: APIProvider) -> Color {
         switch provider {
         case .miniMax:
@@ -597,7 +601,7 @@ struct UsageWidget: Widget {
                     )
                 }
         }
-        .configurationDisplayName("用量看板")
+        .configurationDisplayName("QuotaPulse 用量看板")
         .description("在 mac 桌面查看 API 额度、剩余量和异常状态。")
         .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
         .contentMarginsDisabled()

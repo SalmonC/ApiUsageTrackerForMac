@@ -92,8 +92,7 @@ struct MainView: View {
     
     private var headerView: some View {
         HStack {
-            Image(systemName: "chart.bar.fill")
-                .foregroundColor(.blue)
+            QuotaPulseMark(size: 18, ringColor: .primary)
             Text("QuotaPulse")
                 .font(.headline)
             Spacer()
@@ -149,7 +148,7 @@ struct MainView: View {
             Text(language == .english ? "No API Accounts Configured" : "未配置 API 账号")
                 .font(.subheadline)
                 .foregroundColor(.secondary)
-            Text(language == .english ? "Right-click icon → Settings to add accounts" : "右键菜单栏图标 → 设置，添加账号")
+            Text(language == .english ? "Right-click QuotaPulse → Settings to add accounts" : "右键 QuotaPulse 菜单栏图标 → 设置，添加账号")
                 .font(.caption)
                 .foregroundColor(.secondary)
             HStack(spacing: 8) {

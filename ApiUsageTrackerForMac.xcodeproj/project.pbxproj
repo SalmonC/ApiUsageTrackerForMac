@@ -18,7 +18,9 @@
 		484A216DA5B16129B197429F /* MiniMaxService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FF6B9FE16DDE191C927E55A /* MiniMaxService.swift */; };
 		53150102108CF99497BA4546 /* MiniMaxService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FF6B9FE16DDE191C927E55A /* MiniMaxService.swift */; };
 		5E84302E7AA53CFE13223001 /* SharedModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9414C803D917A736D233CFB1 /* SharedModels.swift */; };
+		7B60CB45BE012D8CDB1F4BD2 /* QuotaPulseMark.swift in Sources */ = {isa = PBXBuildFile; fileRef = C72292D333BFC868DA8912F8 /* QuotaPulseMark.swift */; };
 		87331A603C5EAD3DACE9BBAF /* ProviderAccountTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58EAE0BD066387C4565E4BBE /* ProviderAccountTests.swift */; };
+		89011B2F5304B3212CB3EFDA /* QuotaPulseMark.swift in Sources */ = {isa = PBXBuildFile; fileRef = C72292D333BFC868DA8912F8 /* QuotaPulseMark.swift */; };
 		8E0EC68197844D01FD823D84 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C9CD75A9EE1CA102F828EAF /* SettingsView.swift */; };
 		8F4170DA7AC40592349FAD58 /* UsageWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB8F3E644DAA9E6A7DAE3671 /* UsageWidget.swift */; };
 		AA7C6A147294294B570DCC55 /* UsageMetricsLogicTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C460EA0444BF0C2B9656323D /* UsageMetricsLogicTests.swift */; };
@@ -65,6 +67,7 @@
 		A251B17913629DA70F7514A2 /* CodexServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexServiceTests.swift; sourceTree = "<group>"; };
 		AB8F3E644DAA9E6A7DAE3671 /* UsageWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageWidget.swift; sourceTree = "<group>"; };
 		C460EA0444BF0C2B9656323D /* UsageMetricsLogicTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageMetricsLogicTests.swift; sourceTree = "<group>"; };
+		C72292D333BFC868DA8912F8 /* QuotaPulseMark.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuotaPulseMark.swift; sourceTree = "<group>"; };
 		CD1285205F09B204EBEAE018 /* AppViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppViewModel.swift; sourceTree = "<group>"; };
 		D15B8BEB8D28C099C0F1FB12 /* UsageMetricsLogic.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageMetricsLogic.swift; sourceTree = "<group>"; };
 		D5778A959BCC4A1A91986E98 /* MainView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainView.swift; sourceTree = "<group>"; };
@@ -135,6 +138,7 @@
 				9B66FD2F701D3742749E5277 /* Models */,
 				50DE942B2102F62A697C8487 /* Security */,
 				51642C9F83E5F0A190F1FB11 /* Services */,
+				CA3E4966B2C89510A9621A35 /* Views */,
 			);
 			name = Shared;
 			path = Sources/Shared;
@@ -204,6 +208,14 @@
 				970286AFB63BF1D74B394556 /* UpdateService.swift */,
 			);
 			path = Services;
+			sourceTree = "<group>";
+		};
+		CA3E4966B2C89510A9621A35 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				C72292D333BFC868DA8912F8 /* QuotaPulseMark.swift */,
+			);
+			path = Views;
 			sourceTree = "<group>";
 		};
 		CB69A4731C8DB7323CF137A7 /* Resources */ = {
@@ -329,6 +341,7 @@
 			files = (
 				00F9B57E8B54F79C613BE58D /* KeychainManager.swift in Sources */,
 				53150102108CF99497BA4546 /* MiniMaxService.swift in Sources */,
+				89011B2F5304B3212CB3EFDA /* QuotaPulseMark.swift in Sources */,
 				28C826CE0E50865749DF28C2 /* SharedModels.swift in Sources */,
 				30D02AA389725B8973EBE0AE /* UsageDataSorting.swift in Sources */,
 				8F4170DA7AC40592349FAD58 /* UsageWidget.swift in Sources */,
@@ -344,6 +357,7 @@
 				BD0C01256AD90323EA278935 /* MacUsageTrackerApp.swift in Sources */,
 				BAFDF737F3AA15CB4135459F /* MainView.swift in Sources */,
 				484A216DA5B16129B197429F /* MiniMaxService.swift in Sources */,
+				7B60CB45BE012D8CDB1F4BD2 /* QuotaPulseMark.swift in Sources */,
 				8E0EC68197844D01FD823D84 /* SettingsView.swift in Sources */,
 				5E84302E7AA53CFE13223001 /* SharedModels.swift in Sources */,
 				C155C92883D10BFF2E0B2832 /* UpdateService.swift in Sources */,

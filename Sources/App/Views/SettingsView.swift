@@ -88,8 +88,17 @@ struct SettingsView: View {
 
     private var settingsTabBar: some View {
         VStack(spacing: 0) {
-            HStack {
-                Spacer()
+            HStack(spacing: 12) {
+                HStack(spacing: 7) {
+                    QuotaPulseMark(size: 18, ringColor: .primary)
+                    Text("QuotaPulse")
+                        .font(.headline)
+                        .lineLimit(1)
+                }
+                .frame(width: 132, alignment: .leading)
+
+                Spacer(minLength: 0)
+
                 Picker("", selection: $selectedSettingsTab) {
                     Text(language == .english ? "General" : "通用").tag(SettingsTab.general)
                     Text(language == .english ? "API Accounts" : "API 账号").tag(SettingsTab.accounts)
@@ -97,8 +106,16 @@ struct SettingsView: View {
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 .frame(width: language == .english ? 260 : 220)
-                Spacer()
+
+                Spacer(minLength: 0)
+
+                Text("v\(currentAppVersion)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .monospacedDigit()
+                    .frame(width: 132, alignment: .trailing)
             }
+            .padding(.horizontal, 14)
             .padding(.top, 10)
             .padding(.bottom, 8)
             .background(Color(NSColor.windowBackgroundColor))
@@ -110,22 +127,15 @@ struct SettingsView: View {
     private var generalSettingsView: some View {
         VStack(spacing: 0) {
             ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    HStack(alignment: .center, spacing: 10) {
-                        Text(language == .english ? "General Settings" : "通用设置")
-                            .font(.title3)
-                            .fontWeight(.semibold)
-                        Spacer()
-                        if hasUnsavedChanges {
-                            Label(language == .english ? "Unsaved" : "未保存", systemImage: "circle.fill")
-                                .font(.caption2)
-                                .foregroundColor(.orange)
-                        }
+                VStack(alignment: .leading, spacing: 12) {
+                    if hasUnsavedChanges {
+                        Label(language == .english ? "Unsaved changes" : "有未保存改动", systemImage: "circle.fill")
+                            .font(.caption)
+                            .foregroundColor(.orange)
                     }
 
                     generalCard(
                         title: language == .english ? "Appearance" : "外观",
-                        subtitle: language == .english ? "Language used across the app" : "应用界面显示语言",
                         icon: "textformat"
                     ) {
                         VStack(alignment: .leading, spacing: 7) {
@@ -141,7 +151,6 @@ struct SettingsView: View {
 
                     generalCard(
                         title: language == .english ? "Refresh & Startup" : "刷新与启动",
-                        subtitle: language == .english ? "Background refresh cadence and login startup" : "后台刷新频率和登录后自动启动",
                         icon: "arrow.clockwise"
                     ) {
                         VStack(alignment: .leading, spacing: 12) {
@@ -161,16 +170,7 @@ struct SettingsView: View {
                             Divider()
 
                             Toggle(isOn: $launchAtLogin) {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(language == .english ? "Launch at login" : "开机自启动")
-                                    Text(
-                                        language == .english
-                                        ? "Start QuotaPulse automatically after you sign in to macOS."
-                                        : "登录 macOS 后自动启动 QuotaPulse。"
-                                    )
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
-                                }
+                                Text(language == .english ? "Launch at login" : "开机自启动")
                             }
                             .toggleStyle(.switch)
 
@@ -189,7 +189,6 @@ struct SettingsView: View {
 
                     generalCard(
                         title: language == .english ? "Dashboard" : "看板",
-                        subtitle: language == .english ? "Card order and DeepSeek balance trend display" : "卡片排序和 DeepSeek 余额趋势显示",
                         icon: "rectangle.grid.1x2"
                     ) {
                         VStack(alignment: .leading, spacing: 12) {
@@ -203,28 +202,15 @@ struct SettingsView: View {
                                 }
                                 .pickerStyle(.segmented)
                                 .frame(maxWidth: 430, alignment: .leading)
-                                Text(language == .english
-                                     ? "Manual mode enables drag reordering in the dashboard."
-                                     : "手动排序模式下，可在看板中拖拽调整卡片顺序。")
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
                             }
 
                             Divider()
 
                             Toggle(isOn: $showTrendInDashboard) {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(language == .english ? "Show DeepSeek balance trend" : "显示 DeepSeek 余额趋势")
-                                    Text(
-                                        language == .english
-                                        ? "Only affects DeepSeek cards. Other providers do not show trend charts."
-                                        : "仅影响 DeepSeek 卡片；其他供应商不显示趋势图。"
-                                    )
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
-                                }
+                                Text(language == .english ? "Show DeepSeek balance trend" : "显示 DeepSeek 余额趋势")
                             }
                             .toggleStyle(.switch)
+                            .help(language == .english ? "Only applies to DeepSeek cards" : "仅适用于 DeepSeek 卡片")
 
                             if showTrendInDashboard {
                                 VStack(alignment: .leading, spacing: 7) {
@@ -246,9 +232,6 @@ struct SettingsView: View {
 
                     generalCard(
                         title: language == .english ? "Alerts & Thresholds" : "提醒与阈值",
-                        subtitle: language == .english
-                            ? "Notifications and local balance color thresholds"
-                            : "通知提醒和本地余额颜色阈值",
                         icon: "bell.badge"
                     ) {
                         VStack(alignment: .leading, spacing: 12) {
@@ -292,12 +275,6 @@ struct SettingsView: View {
                                         .font(.caption2)
                                         .foregroundColor(.secondary)
 
-                                        Text(language == .english
-                                             ? "Applies to providers that expose usage percentage: MiniMax, Tavily, and Codex. Balance-only providers such as DeepSeek, KIMI, and OpenAI Costs are not covered by this notification."
-                                             : "适用于能返回用量百分比的供应商：MiniMax、Tavily、Codex。DeepSeek、KIMI、OpenAI Costs 这类余额/花费型供应商不触发此通知。")
-                                            .font(.caption2)
-                                            .foregroundColor(.secondary)
-                                            .fixedSize(horizontal: false, vertical: true)
                                     }
 
                                     compactThresholdPicker(
@@ -347,9 +324,7 @@ struct SettingsView: View {
                                         }
                                     }
 
-                                    Text(language == .english
-                                         ? "Only affects dashboard color. The public balance API does not return the official alert threshold."
-                                         : "仅影响看板颜色；官方公开余额接口不返回官网报警阈值。")
+                                    Text(language == .english ? "Dashboard color only" : "仅影响看板颜色")
                                         .font(.caption2)
                                         .foregroundColor(.secondary)
                                         .fixedSize(horizontal: false, vertical: true)
@@ -360,16 +335,9 @@ struct SettingsView: View {
 
                     generalCard(
                         title: language == .english ? "Hotkey" : "快捷键",
-                        subtitle: language == .english ? "Global shortcut to open the dashboard quickly" : "用于快速打开看板的全局快捷键",
                         icon: "keyboard"
                     ) {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text(language == .english
-                                 ? "Click below and press a key combo (include at least one modifier: ⌘⇧⌥⌃)"
-                                 : "点击下方并录入组合键（至少包含一个修饰键：⌘⇧⌥⌃）")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-
                             HStack(spacing: 8) {
                                 Button(action: {
                                     hotkeyError = nil
@@ -431,16 +399,11 @@ struct SettingsView: View {
                                     .font(.caption)
                                     .foregroundColor(.orange)
                             }
-
-                            Text(language == .english ? "Current: \(hotkey.displayString)" : "当前快捷键：\(hotkey.displayString)")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
                         }
                     }
 
                     generalCard(
                         title: language == .english ? "Updates & Project" : "更新与项目",
-                        subtitle: language == .english ? "Check stable releases and open project docs" : "检查正式版更新并打开项目文档",
                         icon: "arrow.triangle.2.circlepath"
                     ) {
                         VStack(alignment: .leading, spacing: 8) {
@@ -481,18 +444,6 @@ struct SettingsView: View {
                                 .controlSize(.regular)
                             }
 
-                            Text(language == .english
-                                 ? "Mode: manual download updates (unsigned build)"
-                                 : "更新模式：手动下载更新（未签名构建）")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-
-                            Text(language == .english
-                                 ? "Current app version: \(currentAppVersion)"
-                                 : "当前应用版本：\(currentAppVersion)")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-
                             if let statusMessage = updateService.statusMessage {
                                 Text(statusMessage)
                                     .font(.caption)
@@ -523,7 +474,6 @@ struct SettingsView: View {
 
     private func generalCard<Content: View>(
         title: String,
-        subtitle: String,
         icon: String,
         @ViewBuilder content: () -> Content
     ) -> some View {
@@ -540,9 +490,6 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
                         .font(.headline)
-                    Text(subtitle)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
                 }
                 Spacer(minLength: 0)
             }
@@ -569,16 +516,8 @@ struct SettingsView: View {
     
     private var accountsSettingsView: some View {
         VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .center, spacing: 10) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(language == .english ? "API Accounts" : "API 账号")
-                            .font(.title3)
-                            .fontWeight(.semibold)
-                        Text(language == .english ? "Added accounts will appear on dashboard" : "添加账号后可在看板中显示实时状态")
-                            .font(.footnote)
-                            .foregroundColor(.secondary)
-                    }
                     Spacer()
                     if hasUnsavedChanges {
                         Text(language == .english ? "Unsaved" : "未保存")
@@ -717,8 +656,8 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 10) {
             Text(
                 language == .english
-                ? "API fields vary by provider; below are known limits and rendering rules."
-                : "不同平台返回字段不同，以下为当前已知限制与展示规则"
+                ? "Known provider-specific behavior."
+                : "各供应商的特殊展示规则"
             )
             .font(.caption)
             .foregroundColor(.secondary)
@@ -1142,7 +1081,7 @@ struct AccountRowView: View {
     var onNameEditCommitted: () -> Void
     var onProviderChanged: ((APIProvider, APIProvider) -> Void)?
     var language: AppLanguage = .chinese
-    @State private var isCredentialGuideExpanded = true
+    @State private var isCredentialGuideExpanded = false
     
     var body: some View {
         VStack(alignment: .leading, spacing: isExpanded ? 14 : 0) {
@@ -1241,7 +1180,7 @@ struct AccountRowView: View {
                         }
                     } else {
                         Label(
-                            language == .english ? "No credential is pasted here; QuotaPulse uses your local Codex login." : "这里无需粘贴凭证；QuotaPulse 会读取本机 Codex 登录状态。",
+                            language == .english ? "Uses local Codex login" : "使用本机 Codex 登录状态",
                             systemImage: "checkmark.shield"
                         )
                         .font(.caption)

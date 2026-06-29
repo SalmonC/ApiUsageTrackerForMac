@@ -256,13 +256,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
 
             if let menuIcon = NSImage(named: NSImage.Name("MenuBarIcon")) ?? legacyIcon {
-                menuIcon.size = NSSize(width: 18, height: 18)
+                menuIcon.size = NSSize(width: 19, height: 19)
                 button.image = menuIcon
             } else {
-                button.image = NSImage(systemSymbolName: "circle.hexagongrid", accessibilityDescription: "QuotaPulse")
+                button.image = NSImage(systemSymbolName: "waveform.path.ecg", accessibilityDescription: "QuotaPulse")
             }
-            button.image?.isTemplate = false
+            button.image?.isTemplate = true
             button.image?.accessibilityDescription = "QuotaPulse"
+            button.toolTip = "QuotaPulse"
             button.action = #selector(leftClick)
             button.target = self
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
@@ -500,7 +501,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             
             let window = NSWindow(contentViewController: hostingController)
-            window.title = "Settings"
+            window.title = "设置"
             window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
             window.setContentSize(NSSize(width: 560, height: 560))
             window.minSize = NSSize(width: 500, height: 440)
