@@ -300,6 +300,63 @@ struct DeepSeekBalanceSettings: Codable, Equatable {
     }
 }
 
+enum MenuBarPinnedMetric: String, Codable, CaseIterable, Identifiable {
+    case deepSeekBalance
+    case codexFiveHourRemaining
+    case codexWeeklyRemaining
+
+    var id: String { rawValue }
+
+    func displayName(language: AppLanguage) -> String {
+        switch self {
+        case .deepSeekBalance:
+            return language == .english ? "DeepSeek balance" : "DeepSeek 余额"
+        case .codexFiveHourRemaining:
+            return language == .english ? "Codex 5h remaining" : "Codex 5小时余量"
+        case .codexWeeklyRemaining:
+            return language == .english ? "Codex weekly remaining" : "Codex 周余量"
+        }
+    }
+
+    func defaultPrefix(language: AppLanguage) -> String {
+        switch self {
+        case .deepSeekBalance:
+            return language == .english ? "DS " : "DS "
+        case .codexFiveHourRemaining:
+            return "5h "
+        case .codexWeeklyRemaining:
+            return language == .english ? "1w " : "1周 "
+        }
+    }
+}
+
+struct MenuBarPinnedItem: Codable, Equatable, Identifiable {
+    var metric: MenuBarPinnedMetric
+    var prefix: String
+    var isEnabled: Bool
+
+    var id: MenuBarPinnedMetric { metric }
+
+    init(metric: MenuBarPinnedMetric, prefix: String? = nil, isEnabled: Bool = false, language: AppLanguage = .chinese) {
+        self.metric = metric
+        self.prefix = prefix ?? metric.defaultPrefix(language: language)
+        self.isEnabled = isEnabled
+    }
+
+    static func defaults(language: AppLanguage = .chinese) -> [MenuBarPinnedItem] {
+        MenuBarPinnedMetric.allCases.map { MenuBarPinnedItem(metric: $0, language: language) }
+    }
+
+    static func normalized(_ items: [MenuBarPinnedItem], language: AppLanguage) -> [MenuBarPinnedItem] {
+        var byMetric = Dictionary(uniqueKeysWithValues: items.map { ($0.metric, $0) })
+        return MenuBarPinnedMetric.allCases.map { metric in
+            var item = byMetric.removeValue(forKey: metric) ?? MenuBarPinnedItem(metric: metric, language: language)
+            item.prefix = String(item.prefix.prefix(12))
+            return item
+        }
+    }
+}
+
 struct AppSettings: Codable {
     var accounts: [APIAccount] = []
     var refreshInterval: Int = 5
@@ -310,6 +367,7 @@ struct AppSettings: Codable {
     var showTrendInDashboard: Bool = true
     var dashboardTrendWindow: TrendWindow = .week
     var launchAtLogin: Bool = false
+    var menuBarPinnedItems: [MenuBarPinnedItem] = MenuBarPinnedItem.defaults()
 
     init(
         accounts: [APIAccount] = [],
@@ -320,7 +378,8 @@ struct AppSettings: Codable {
         deepSeekBalanceSettings: DeepSeekBalanceSettings = .default,
         showTrendInDashboard: Bool = true,
         dashboardTrendWindow: TrendWindow = .week,
-        launchAtLogin: Bool = false
+        launchAtLogin: Bool = false,
+        menuBarPinnedItems: [MenuBarPinnedItem]? = nil
     ) {
         self.accounts = accounts.filter { $0.provider.supportsRemainingQuotaQuery }
         self.refreshInterval = refreshInterval
@@ -331,6 +390,7 @@ struct AppSettings: Codable {
         self.showTrendInDashboard = showTrendInDashboard
         self.dashboardTrendWindow = TrendWindow.dashboardSelectable.contains(dashboardTrendWindow) ? dashboardTrendWindow : .week
         self.launchAtLogin = launchAtLogin
+        self.menuBarPinnedItems = MenuBarPinnedItem.normalized(menuBarPinnedItems ?? MenuBarPinnedItem.defaults(language: language), language: language)
     }
 
     enum CodingKeys: String, CodingKey {
@@ -343,6 +403,7 @@ struct AppSettings: Codable {
         case showTrendInDashboard
         case dashboardTrendWindow
         case launchAtLogin
+        case menuBarPinnedItems
     }
 
     init(from decoder: Decoder) throws {
@@ -361,6 +422,8 @@ struct AppSettings: Codable {
         let decodedTrendWindow = try container.decodeIfPresent(TrendWindow.self, forKey: .dashboardTrendWindow) ?? .week
         dashboardTrendWindow = TrendWindow.dashboardSelectable.contains(decodedTrendWindow) ? decodedTrendWindow : .week
         launchAtLogin = try container.decodeIfPresent(Bool.self, forKey: .launchAtLogin) ?? false
+        let decodedMenuBarPinnedItems = try container.decodeIfPresent([MenuBarPinnedItem].self, forKey: .menuBarPinnedItems)
+        menuBarPinnedItems = MenuBarPinnedItem.normalized(decodedMenuBarPinnedItems ?? MenuBarPinnedItem.defaults(language: language), language: language)
     }
     
     static let `default` = AppSettings()

@@ -41,7 +41,7 @@ final class UsageMetricsLogicTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(monthPoints.count, dayPoints.count)
     }
 
-    func testDeepSeekDailyBalanceUsesFirstSnapshotAndSkipsMissingDays() throws {
+    func testDeepSeekDailyBalanceUsesLastSnapshotAndSkipsMissingDays() throws {
         let accountId = UUID()
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!
@@ -65,9 +65,9 @@ final class UsageMetricsLogicTests: XCTestCase {
             calendar: calendar
         )
 
-        XCTAssertEqual(points.map(\.balance), [10, 7, 12])
+        XCTAssertEqual(points.map(\.balance), [9, 7, 12])
         XCTAssertNil(points[0].deltaFromPrevious)
-        XCTAssertEqual(points[1].deltaFromPrevious, -3)
+        XCTAssertEqual(points[1].deltaFromPrevious, -2)
         XCTAssertEqual(points[2].deltaFromPrevious, 5)
         XCTAssertEqual(points.map { calendar.component(.day, from: $0.day) }, [21, 23, 24])
     }

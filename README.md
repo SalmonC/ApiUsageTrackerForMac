@@ -5,7 +5,7 @@ A macOS menu bar application for tracking API usage quotas from various AI provi
 <p align="center">
   <img src="https://img.shields.io/badge/platform-macOS%2014.0+-blue" alt="Platform">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
-  <img src="https://img.shields.io/badge/version-1.0.4-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-1.0.5-blue" alt="Version">
 </p>
 
 ---
@@ -26,9 +26,10 @@ A macOS menu bar application for tracking API usage quotas from various AI provi
 - **Menu Bar Interface** - Quick access to API usage from the menu bar
 - **Desktop Widgets** - View usage on your desktop (small, medium, large sizes; source retained, temporarily disabled in distribution builds)
 - **Auto Refresh** - Configurable automatic refresh interval (1-60 minutes)
+- **Pinned Menu Bar Values** - Optionally show selected DeepSeek/Codex values next to the menu bar icon with custom labels
 - **Global Hotkey** - Show/hide window with customizable keyboard shortcut
 - **Test Connection** - Verify API keys before saving
-- **Low Usage Alerts** - System notifications when usage exceeds 80% or 90%
+- **Low Usage Alerts** - System notifications when usage exceeds the configured threshold
 - **In-app Update Check** - Sparkle-based stable update check in Settings > General
 
 #### Security
@@ -47,6 +48,8 @@ A macOS menu bar application for tracking API usage quotas from various AI provi
 #### UI/UX
 - **Collapsible Dashboard** - Expand/collapse accounts to see details
 - **Usage Progress** - Visual progress bars showing usage percentage
+- **DeepSeek Balance Trend** - Optional daily balance trend based on the last query of each day
+- **Codex Reset Time** - Shows the next reset time point for 5-hour and weekly quota windows
 - **Color-coded Status** - Green/Orange/Red based on usage level
 - **Error Handling** - Clear error messages with retry options
 
@@ -153,9 +156,10 @@ Optional environment variables:
 - **菜单栏界面** - 从菜单栏快速查看 API 用量
 - **桌面小组件** - 在桌面上查看用量（小、中、大三种尺寸；代码保留，分发构建中暂时关闭）
 - **自动刷新** - 可配置的自动刷新间隔（1-60 分钟）
+- **菜单栏固定数据** - 可将 DeepSeek/Codex 指定数据以自定义文本固定显示在菜单栏图标旁
 - **全局快捷键** - 可自定义的快捷键显示/隐藏窗口
 - **连接测试** - 保存前验证 API Key 是否有效
-- **用量提醒** - 用量超过 80% 或 90% 时发送系统通知
+- **用量提醒** - 用量超过自定义阈值时发送系统通知
 - **应用内检查更新** - 在设置 > 通用中使用 Sparkle 检查正式版更新
 
 #### 安全性
@@ -173,6 +177,8 @@ Optional environment variables:
 
 #### 界面设计
 - **可折叠仪表盘** - 展开/折叠账户查看详情
+- **DeepSeek 余额趋势** - 可选展示每日余额趋势，每天采用当天最后一次查询结果
+- **Codex 刷新时间点** - 5 小时额度与周额度展示下一次刷新的具体时间点
 - **用量进度条** - 可视化显示用量百分比
 - **颜色编码状态** - 根据用量级别显示绿/橙/红色
 - **错误处理** - 清晰的错误信息和重试选项
@@ -272,6 +278,13 @@ Sparkle 发布 / appcast 流程见：
 ---
 
 ## Changelog / 更新日志
+
+### v1.0.5 (2026-07-02)
+- **New / 新增**: Add optional menu bar pinned values for DeepSeek balance, Codex 5-hour remaining quota, and Codex weekly remaining quota, each with custom label text / 新增菜单栏固定数据展示，支持 DeepSeek 余额、Codex 5 小时余量与 Codex 周余量，并可自定义前缀文本
+- **Change / 调整**: Codex dashboard reset rows now show the next refresh time point instead of a relative countdown, matching the Codex app display style / Codex 看板刷新行改为显示下一次刷新的具体时间点，不再显示相对倒计时，与 Codex 应用展示逻辑一致
+- **Fix / 修复**: DeepSeek balance trend now uses the last query of each day and avoids clipping delta labels near chart boundaries / DeepSeek 余额趋势改为采用每天最后一次查询结果，并修复靠近图表边界时变化值被裁切的问题
+- **Improve / 优化**: Settings adds a dedicated Menu Bar section and keeps pinned value updates based on existing refresh data without extra provider requests / 设置页新增“菜单栏”配置区，固定数据仅使用既有刷新结果，不增加供应商请求
+- **Verify / 验证**: Passed unit tests, app/widget builds, and automated DMG startup verification / 已通过单元测试、应用与小组件构建、DMG 自动启动验证
 
 ### v1.0.2 (2026-03-12)
 - **Fix / 修复**: Stabilized popover anchoring so the dashboard opens from the menu bar icon instead of occasionally drifting to an unrelated desktop position / 修复看板锚点定位，避免偶发从菜单栏图标脱离并出现在桌面错误位置

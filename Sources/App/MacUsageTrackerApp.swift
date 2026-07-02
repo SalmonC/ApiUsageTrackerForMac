@@ -102,6 +102,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         
         Task {
             await viewModel.refreshAll(reloadSettings: false)
+            updateMenuBarPinnedDisplay()
             updatePopoverSize()  // Update height after initial data load
         }
     }
@@ -119,6 +120,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.checkLowUsageAndNotify()
+                self?.updateMenuBarPinnedDisplay()
             }
     }
 
@@ -235,6 +237,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Task { @MainActor in
                 await self?.viewModel.refreshAll(reloadSettings: false)
                 self?.updatePopoverSize()  // Update height after settings change
+                self?.updateMenuBarPinnedDisplay()
                 self?.updateGlobalHotKey()
                 self?.setupRefreshTimer()
             }
@@ -268,6 +271,92 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             button.target = self
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
+        updateMenuBarPinnedDisplay()
+    }
+
+    private func updateMenuBarPinnedDisplay() {
+        guard let button = statusItem?.button else { return }
+        let title = menuBarPinnedTitle()
+        button.title = title
+        button.imagePosition = title.isEmpty ? .imageOnly : .imageLeading
+        button.toolTip = title.isEmpty ? "QuotaPulse" : "QuotaPulse · \(title)"
+    }
+
+    private func menuBarPinnedTitle() -> String {
+        let settings = viewModel.settings
+        let items = MenuBarPinnedItem
+            .normalized(settings.menuBarPinnedItems, language: settings.language)
+            .filter(\.isEnabled)
+        guard !items.isEmpty else { return "" }
+
+        let segments = items.compactMap { item -> String? in
+            guard let value = menuBarPinnedValue(for: item.metric) else { return nil }
+            return "\(item.prefix)\(value)"
+        }
+        return segments.joined(separator: " ")
+    }
+
+    private func menuBarPinnedValue(for metric: MenuBarPinnedMetric) -> String? {
+        switch metric {
+        case .deepSeekBalance:
+            guard
+                let data = viewModel.usageData.first(where: { $0.provider == .deepSeek && $0.errorMessage == nil }),
+                let balance = preferredDeepSeekBalance(from: data.currencyBalances)
+            else { return nil }
+            return formatMenuBarCurrency(balance.total, currency: balance.currency)
+        case .codexFiveHourRemaining:
+            guard let data = viewModel.usageData.first(where: { $0.provider == .codex && $0.errorMessage == nil }) else {
+                return nil
+            }
+            return formatMenuBarPercent(primaryRemainingPercentage(for: data))
+        case .codexWeeklyRemaining:
+            guard let data = viewModel.usageData.first(where: { $0.provider == .codex && $0.errorMessage == nil }) else {
+                return nil
+            }
+            return formatMenuBarPercent(secondaryRemainingPercentage(for: data))
+        }
+    }
+
+    private func preferredDeepSeekBalance(from balances: [CurrencyBalance]) -> CurrencyBalance? {
+        balances.first { $0.currency.uppercased() == "CNY" } ?? balances.first
+    }
+
+    private func primaryRemainingPercentage(for data: UsageData) -> Double? {
+        if data.primaryCycleIsPercentage == true {
+            return data.tokenRemaining.map { min(max($0, 0), 100) }
+        }
+        if let remaining = data.tokenRemaining, let total = data.tokenTotal, total > 0 {
+            return min(max(remaining / total * 100, 0), 100)
+        }
+        return nil
+    }
+
+    private func secondaryRemainingPercentage(for data: UsageData) -> Double? {
+        if data.secondaryCycleIsPercentage == true {
+            return data.monthlyRemaining.map { min(max($0, 0), 100) }
+        }
+        if let remaining = data.monthlyRemaining, let total = data.monthlyTotal, total > 0 {
+            return min(max(remaining / total * 100, 0), 100)
+        }
+        return nil
+    }
+
+    private func formatMenuBarCurrency(_ value: Double, currency: String) -> String {
+        let symbol: String
+        switch currency.uppercased() {
+        case "CNY":
+            symbol = "¥"
+        case "USD":
+            symbol = "$"
+        default:
+            symbol = "\(currency.uppercased()) "
+        }
+        return "\(symbol)\(Int(value.rounded()))"
+    }
+
+    private func formatMenuBarPercent(_ value: Double?) -> String? {
+        guard let value else { return nil }
+        return "\(Int(min(max(value, 0), 100).rounded()))%"
     }
     
     private func setupGlobalHotKey() {
@@ -477,6 +566,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func refreshAction() {
         Task { @MainActor in
             await viewModel.refreshAll()
+            updateMenuBarPinnedDisplay()
             updatePopoverSize()  // Update height after refresh
         }
     }

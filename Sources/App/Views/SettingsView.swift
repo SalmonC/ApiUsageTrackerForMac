@@ -26,6 +26,7 @@ struct SettingsView: View {
     @State private var dashboardSortMode: DashboardSortMode = .manual
     @State private var dashboardTrendWindow: TrendWindow = .week
     @State private var launchAtLogin: Bool = false
+    @State private var menuBarPinnedItems: [MenuBarPinnedItem] = MenuBarPinnedItem.defaults()
     @State private var editingAccountID: UUID?
     @State private var nameDraftByAccountID: [UUID: String] = [:]
     @State private var nameAtEditStartByAccountID: [UUID: String] = [:]
@@ -146,6 +147,26 @@ struct SettingsView: View {
                             }
                             .pickerStyle(.segmented)
                             .frame(maxWidth: 260, alignment: .leading)
+                        }
+                    }
+
+                    generalCard(
+                        title: language == .english ? "Menu Bar" : "菜单栏",
+                        icon: "menubar.rectangle"
+                    ) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text(language == .english
+                                 ? "Pin selected live values next to the menu bar icon. Values use the latest refreshed data and do not trigger extra requests."
+                                 : "将选定数据固定显示在菜单栏图标旁。数据来自最近一次刷新，不会产生额外请求。")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+
+                            VStack(alignment: .leading, spacing: 8) {
+                                ForEach(MenuBarPinnedMetric.allCases) { metric in
+                                    menuBarPinnedMetricRow(metric)
+                                }
+                            }
                         }
                     }
 
@@ -739,6 +760,7 @@ struct SettingsView: View {
         deepSeekBalanceThreshold = settings.deepSeekBalanceSettings.threshold
         showTrendInDashboard = settings.showTrendInDashboard
         dashboardTrendWindow = settings.dashboardTrendWindow
+        menuBarPinnedItems = MenuBarPinnedItem.normalized(settings.menuBarPinnedItems, language: language)
         dashboardSortMode = viewModel.dashboardSortMode
         viewModel.refreshLaunchAtLoginStatus()
         launchAtLogin = viewModel.launchAtLoginEnabled
@@ -773,7 +795,8 @@ struct SettingsView: View {
             deepSeekBalanceSettings: normalizedDeepSeekBalanceSettings(),
             showTrendInDashboard: showTrendInDashboard,
             dashboardTrendWindow: dashboardTrendWindow,
-            launchAtLogin: launchAtLogin
+            launchAtLogin: launchAtLogin,
+            menuBarPinnedItems: normalizedMenuBarPinnedItems()
         )
         viewModel.saveSettings(settings)
         viewModel.setDashboardSortMode(dashboardSortMode)
@@ -991,7 +1014,8 @@ struct SettingsView: View {
             deepSeekBalanceSettings: normalizedDeepSeekBalanceSettings(),
             showTrendInDashboard: showTrendInDashboard,
             dashboardTrendWindow: dashboardTrendWindow,
-            launchAtLogin: launchAtLogin
+            launchAtLogin: launchAtLogin,
+            menuBarPinnedItems: normalizedMenuBarPinnedItems()
         )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
@@ -1008,6 +1032,87 @@ struct SettingsView: View {
         case .name:
             return "textformat.abc"
         }
+    }
+
+    private func menuBarPinnedMetricRow(_ metric: MenuBarPinnedMetric) -> some View {
+        HStack(alignment: .center, spacing: 10) {
+            Toggle(isOn: menuBarPinnedEnabledBinding(for: metric)) {
+                Text(metric.displayName(language: language))
+                    .font(.subheadline)
+            }
+            .toggleStyle(.checkbox)
+            .frame(width: language == .english ? 190 : 150, alignment: .leading)
+
+            TextField(
+                language == .english ? "Custom text" : "自定义文本",
+                text: menuBarPinnedPrefixBinding(for: metric)
+            )
+            .textFieldStyle(.roundedBorder)
+            .frame(maxWidth: 180)
+            .disabled(!menuBarPinnedEnabledBinding(for: metric).wrappedValue)
+
+            Text(menuBarPinnedPreviewText(for: metric))
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .monospacedDigit()
+
+            Spacer(minLength: 0)
+        }
+        .padding(8)
+        .background(Color.secondary.opacity(0.07))
+        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+    }
+
+    private func menuBarPinnedEnabledBinding(for metric: MenuBarPinnedMetric) -> Binding<Bool> {
+        Binding(
+            get: { menuBarPinnedItem(for: metric).isEnabled },
+            set: { newValue in
+                updateMenuBarPinnedItem(metric) { item in
+                    item.isEnabled = newValue
+                }
+            }
+        )
+    }
+
+    private func menuBarPinnedPrefixBinding(for metric: MenuBarPinnedMetric) -> Binding<String> {
+        Binding(
+            get: { menuBarPinnedItem(for: metric).prefix },
+            set: { newValue in
+                updateMenuBarPinnedItem(metric) { item in
+                    item.prefix = String(newValue.prefix(12))
+                }
+            }
+        )
+    }
+
+    private func menuBarPinnedItem(for metric: MenuBarPinnedMetric) -> MenuBarPinnedItem {
+        let normalized = MenuBarPinnedItem.normalized(menuBarPinnedItems, language: language)
+        return normalized.first(where: { $0.metric == metric }) ?? MenuBarPinnedItem(metric: metric, language: language)
+    }
+
+    private func updateMenuBarPinnedItem(_ metric: MenuBarPinnedMetric, mutate: (inout MenuBarPinnedItem) -> Void) {
+        var normalized = MenuBarPinnedItem.normalized(menuBarPinnedItems, language: language)
+        guard let index = normalized.firstIndex(where: { $0.metric == metric }) else {
+            return
+        }
+        mutate(&normalized[index])
+        menuBarPinnedItems = normalized
+    }
+
+    private func menuBarPinnedPreviewText(for metric: MenuBarPinnedMetric) -> String {
+        let prefix = menuBarPinnedItem(for: metric).prefix
+        switch metric {
+        case .deepSeekBalance:
+            return "\(prefix)¥12"
+        case .codexFiveHourRemaining:
+            return "\(prefix)73%"
+        case .codexWeeklyRemaining:
+            return "\(prefix)97%"
+        }
+    }
+
+    private func normalizedMenuBarPinnedItems() -> [MenuBarPinnedItem] {
+        MenuBarPinnedItem.normalized(menuBarPinnedItems, language: language)
     }
 
     @ViewBuilder

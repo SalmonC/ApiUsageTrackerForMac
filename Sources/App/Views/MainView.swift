@@ -669,12 +669,10 @@ private struct UsageRowView: View {
             }
 
             if let reset = cycle.reset {
-                ResetCountdownLine(
+                CodexResetTimeLine(
                     resetAt: reset,
                     language: language,
-                    isEstimated: cycle.isResetEstimated,
-                    resetVerb: resetVerb(for: cycle),
-                    isActive: isDashboardVisible
+                    isEstimated: cycle.isResetEstimated
                 )
             } else {
                 Text(language == .english ? "Reset time unavailable" : "重置时间未知")
@@ -750,17 +748,25 @@ private struct UsageRowView: View {
         return (start, end)
     }
 
+    private func deepSeekChartScaleDomain(from domain: (start: Date, end: Date)) -> ClosedRange<Date> {
+        let horizontalPadding: TimeInterval = 43_200
+        return domain.start.addingTimeInterval(-horizontalPadding)...domain.end.addingTimeInterval(horizontalPadding)
+    }
+
     private func deepSeekYDomain() -> ClosedRange<Double> {
         let values = deepSeekBalanceTrendPoints.map(\.balance)
         guard let minValue = values.min(), let maxValue = values.max() else {
             return 0...1
         }
         if abs(maxValue - minValue) < 0.000_001 {
-            let padding = max(1, abs(maxValue) * 0.12)
-            return max(0, minValue - padding)...(maxValue + padding)
+            let bottomPadding = max(0.5, abs(maxValue) * 0.12)
+            let topPadding = max(1, abs(maxValue) * 0.35)
+            return max(0, minValue - bottomPadding)...(maxValue + topPadding)
         }
-        let padding = max((maxValue - minValue) * 0.18, 0.5)
-        return max(0, minValue - padding)...(maxValue + padding)
+        let range = maxValue - minValue
+        let bottomPadding = max(range * 0.16, 0.5)
+        let topPadding = max(range * 0.45, 1)
+        return max(0, minValue - bottomPadding)...(maxValue + topPadding)
     }
 
     private func shortDateLabel(_ date: Date) -> String {
@@ -774,6 +780,7 @@ private struct UsageRowView: View {
     private var deepSeekBalanceTrendRow: some View {
         if showTrend, !deepSeekBalanceTrendPoints.isEmpty {
             let chartDomain = deepSeekChartDomain()
+            let chartScaleDomain = deepSeekChartScaleDomain(from: chartDomain)
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     Image(systemName: "chart.xyaxis.line")
@@ -813,7 +820,7 @@ private struct UsageRowView: View {
                         }
                     }
                 }
-                .chartXScale(domain: chartDomain.start...chartDomain.end)
+                .chartXScale(domain: chartScaleDomain)
                 .chartYScale(domain: deepSeekYDomain())
                 .chartXAxis(.hidden)
                 .chartYAxis(.hidden)
@@ -1330,6 +1337,41 @@ private struct ResetCountdownLine: View {
         guard seconds > 0 else { return nil }
         return formatCountdown(seconds: seconds, language: language, includeSecondsForMinutes: false)
     }
+}
+
+private struct CodexResetTimeLine: View {
+    let resetAt: Date
+    let language: AppLanguage
+    let isEstimated: Bool
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "clock")
+                .font(.caption2)
+                .foregroundColor(.secondary)
+            Text(label)
+                .font(.caption2)
+                .foregroundColor(.secondary)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+        }
+    }
+
+    private var label: String {
+        let time = resetTimeString(resetAt, language: language)
+        if isEstimated {
+            return language == .english ? "Est. refresh at \(time)" : "预计 \(time) 刷新"
+        }
+        return language == .english ? "Refresh at \(time)" : "\(time) 刷新"
+    }
+}
+
+private func resetTimeString(_ date: Date, language: AppLanguage) -> String {
+    let calendar = Calendar.current
+    let formatter = DateFormatter()
+    formatter.locale = language == .english ? Locale(identifier: "en_US_POSIX") : Locale(identifier: "zh_CN")
+    formatter.dateFormat = calendar.isDateInToday(date) ? "HH:mm" : "M/d HH:mm"
+    return formatter.string(from: date)
 }
 
 private func formatCountdown(seconds: Int, language: AppLanguage, includeSecondsForMinutes: Bool) -> String {

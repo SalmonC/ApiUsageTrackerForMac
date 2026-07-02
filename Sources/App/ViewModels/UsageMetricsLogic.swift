@@ -109,17 +109,15 @@ enum UsageMetricsLogic {
 
         guard !source.isEmpty else { return [] }
 
-        var firstByDayAndCurrency: [String: UsageSnapshot] = [:]
+        var lastByDayAndCurrency: [String: UsageSnapshot] = [:]
         for snapshot in source {
             guard let currency = snapshot.balanceCurrency?.uppercased() else { continue }
             let day = calendar.startOfDay(for: snapshot.capturedAt)
             let key = "\(currency)-\(day.timeIntervalSince1970)"
-            if firstByDayAndCurrency[key] == nil {
-                firstByDayAndCurrency[key] = snapshot
-            }
+            lastByDayAndCurrency[key] = snapshot
         }
 
-        let sortedFirstSnapshots = firstByDayAndCurrency.values.sorted {
+        let sortedLastSnapshots = lastByDayAndCurrency.values.sorted {
             if $0.balanceCurrency?.uppercased() != $1.balanceCurrency?.uppercased() {
                 return ($0.balanceCurrency ?? "") < ($1.balanceCurrency ?? "")
             }
@@ -127,7 +125,7 @@ enum UsageMetricsLogic {
         }
 
         var previousByCurrency: [String: Double] = [:]
-        return sortedFirstSnapshots.compactMap { snapshot in
+        return sortedLastSnapshots.compactMap { snapshot in
             guard
                 let balance = snapshot.balanceTotal,
                 let rawCurrency = snapshot.balanceCurrency
