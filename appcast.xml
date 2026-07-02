@@ -1,13 +1,14 @@
-<?xml version="1.0" encoding="utf-8"?>
-<rss version="2.0"
-     xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle"
-     xmlns:dc="http://purl.org/dc/elements/1.1/"
-     xmlns:atom="http://www.w3.org/2005/Atom">
-  <channel>
-    <title>QuotaPulse Stable Updates</title>
-    <link>https://github.com/SalmonC/ApiUsageTrackerForMac</link>
-    <atom:link href="https://salmonc.github.io/ApiUsageTrackerForMac/appcast.xml" rel="self" type="application/rss+xml"/>
-    <description>Stable channel appcast for QuotaPulse</description>
-    <language>en</language>
-  </channel>
+<?xml version="1.0" standalone="yes"?>
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>QuotaPulse</title>
+        <item>
+            <title>1.0.5</title>
+            <pubDate>Thu, 02 Jul 2026 11:41:48 +0800</pubDate>
+            <sparkle:version>26</sparkle:version>
+            <sparkle:shortVersionString>1.0.5</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/SalmonC/ApiUsageTrackerForMac/releases/download/v1.0.5/QuotaPulse-v1.0.5.zip" length="3456593" type="application/octet-stream" sparkle:edSignature="jNf4VWrLIn+AG0DhQbwH4XrES+YYY7Ytcdx/OePnob/GfaYulQpk+zUCk/c0FQYZhjPqe4LXAjPrYZShFy8BBA=="/>
+        </item>
+    </channel>
 </rss>
