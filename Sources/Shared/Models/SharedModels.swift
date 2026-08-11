@@ -599,6 +599,26 @@ struct UsageSnapshot: Codable, Equatable, Identifiable {
     var balanceCurrency: String? = nil
 }
 
+enum SettingsPersistenceError: LocalizedError {
+    case defaultsUnavailable
+    case encodeFailed(Error)
+    case keychainFailed(Error)
+    case defaultsVerificationFailed
+
+    var errorDescription: String? {
+        switch self {
+        case .defaultsUnavailable:
+            return "无法访问应用设置存储。"
+        case .encodeFailed:
+            return "设置数据编码失败。"
+        case .keychainFailed(let error):
+            return "API Key 未能安全保存：\(error.localizedDescription)"
+        case .defaultsVerificationFailed:
+            return "设置写入后校验失败，API Key 已尝试恢复到修改前状态。"
+        }
+    }
+}
+
 final class Storage {
     static let shared = Storage()
     
@@ -700,56 +720,52 @@ final class Storage {
         return decoded
     }
     
-    func saveSettings(_ settings: AppSettings) {
+    func saveSettings(_ settings: AppSettings) throws {
         guard let defaults = userDefaults else {
             logCriticalOnce("saveSettings.defaultsUnavailable", "App Group UserDefaults unavailable while saving settings")
-            return
+            throw SettingsPersistenceError.defaultsUnavailable
         }
-        let existingSettings = loadSettings(includeAPIKeys: false)
-        let newAccountIDs = Set(settings.accounts.map(\.id))
-        let keychainSnapshot = KeychainManager.shared.loadAPIKeys(for: settings.accounts.map(\.id))
-        
-        // Remove keys for deleted accounts so they do not linger in Keychain.
-        for oldAccount in existingSettings.accounts where !newAccountIDs.contains(oldAccount.id) {
-            do {
-                try KeychainManager.shared.deleteAPIKey(for: oldAccount.id)
-            } catch {
-                Logger.log("Failed to delete removed account API key from Keychain: \(error)")
-            }
-        }
-        
-        // Save only changed API keys to Keychain to avoid repeated authorization prompts.
-        for account in settings.accounts {
-            let existingKey = keychainSnapshot[account.id] ?? ""
-            if account.apiKey == existingKey {
-                continue
-            }
-            
-            if !account.apiKey.isEmpty {
-                do {
-                    try KeychainManager.shared.saveAPIKey(account.apiKey, for: account.id)
-                } catch {
-                    Logger.log("Failed to save API key to Keychain: \(error)")
-                }
-            } else {
-                do {
-                    try KeychainManager.shared.deleteAPIKey(for: account.id)
-                } catch {
-                    Logger.log("Failed to clear API key from Keychain: \(error)")
-                }
-            }
-        }
-        
-        // Save settings without API keys to UserDefaults
+
+        // Encode first so an encoding error cannot leave Keychain ahead of settings.
         var settingsWithoutKeys = settings
         for i in settingsWithoutKeys.accounts.indices {
             settingsWithoutKeys.accounts[i].apiKey = ""
         }
-        
-        if let encoded = try? JSONEncoder().encode(settingsWithoutKeys) {
-            defaults.set(encoded, forKey: settingsKey)
-        } else {
+
+        let encoded: Data
+        do {
+            encoded = try JSONEncoder().encode(settingsWithoutKeys)
+        } catch {
             logCriticalOnce("saveSettings.encodeFailed", "Failed to encode app settings: accounts=\(settings.accounts.count)")
+            throw SettingsPersistenceError.encodeFailed(error)
+        }
+
+        let targetKeys = Dictionary(uniqueKeysWithValues: settings.accounts.compactMap { account in
+            account.apiKey.isEmpty ? nil : (account.id, account.apiKey)
+        })
+        let previousKeys: [UUID: String]
+        do {
+            previousKeys = try KeychainManager.shared.replaceAPIKeys(targetKeys)
+        } catch {
+            Logger.critical("Failed to atomically save API keyring: \(error)")
+            throw SettingsPersistenceError.keychainFailed(error)
+        }
+
+        let previousSettingsData = defaults.data(forKey: settingsKey)
+        defaults.set(encoded, forKey: settingsKey)
+        guard defaults.data(forKey: settingsKey) == encoded else {
+            if let previousSettingsData {
+                defaults.set(previousSettingsData, forKey: settingsKey)
+            } else {
+                defaults.removeObject(forKey: settingsKey)
+            }
+            do {
+                try KeychainManager.shared.replaceAPIKeys(previousKeys)
+            } catch {
+                Logger.critical("Settings verification and Keychain rollback both failed: \(error)")
+            }
+            Logger.critical("Settings write verification failed after Keychain commit")
+            throw SettingsPersistenceError.defaultsVerificationFailed
         }
     }
     

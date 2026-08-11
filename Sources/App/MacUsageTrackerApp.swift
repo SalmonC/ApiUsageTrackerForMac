@@ -1,4 +1,23 @@
 import SwiftUI
+
+enum RuntimeEnvironment {
+    static func detectsUnitTests(
+        environment: [String: String],
+        arguments: [String],
+        hasXCTestClass: Bool
+    ) -> Bool {
+        environment["XCTestConfigurationFilePath"] != nil
+            || environment["XCInjectBundleInto"] != nil
+            || arguments.contains(where: { $0.localizedCaseInsensitiveContains("xctest") })
+            || hasXCTestClass
+    }
+
+    static let isRunningUnitTests = detectsUnitTests(
+        environment: ProcessInfo.processInfo.environment,
+        arguments: ProcessInfo.processInfo.arguments,
+        hasXCTestClass: NSClassFromString("XCTestCase") != nil
+    )
+}
 import Carbon
 import UserNotifications
 import QuartzCore
@@ -80,8 +99,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var popoverAnchorTopY: CGFloat?
     private var usageDataObserver: AnyCancellable?
     private let storage = Storage.shared
-    private var alertNotificationState: [String: Date] = Storage.shared.loadAlertNotificationState()
-    var viewModel = AppViewModel()
+    private var alertNotificationState: [String: Date] = RuntimeEnvironment.isRunningUnitTests
+        ? [:]
+        : Storage.shared.loadAlertNotificationState()
+    var viewModel = AppViewModel(loadStoredState: !RuntimeEnvironment.isRunningUnitTests)
     lazy var updateService = UpdateService(
         languageProvider: { [weak self] in
             self?.viewModel.settings.language ?? .chinese
@@ -89,6 +110,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     )
     
     func applicationDidFinishLaunching(_ notification: Notification) {
+        guard !RuntimeEnvironment.isRunningUnitTests else { return }
+
         setupPopover()
         setupMenuBar()
         setupGlobalHotKey()

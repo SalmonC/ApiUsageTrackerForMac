@@ -11,8 +11,8 @@ final class AppViewModel: ObservableObject {
     @Published private(set) var isDashboardVisible = false
     @Published private(set) var nextAutoRefreshDate: Date?
     @Published var refreshingAccountIDs: Set<UUID> = []
-    @Published var dashboardSortMode: DashboardSortMode = Storage.shared.loadDashboardSortMode()
-    @Published var dashboardManualOrder: [UUID] = Storage.shared.loadDashboardManualOrder()
+    @Published var dashboardSortMode: DashboardSortMode
+    @Published var dashboardManualOrder: [UUID]
     @Published var trendWindow: TrendWindow = .week
     @Published private(set) var launchAtLoginEnabled = false
     @Published private(set) var launchAtLoginErrorMessage: String?
@@ -41,16 +41,18 @@ final class AppViewModel: ObservableObject {
     var onOpenSettings: (() -> Void)?
     
     init(loadStoredState: Bool = true) {
+        dashboardSortMode = loadStoredState ? Storage.shared.loadDashboardSortMode() : .manual
+        dashboardManualOrder = loadStoredState ? Storage.shared.loadDashboardManualOrder() : []
         if loadStoredState {
             cycleLearningState = Storage.shared.loadCycleLearningState()
             usageSnapshots = Storage.shared.loadUsageSnapshots()
             loadSettings()
             loadCachedData()
+            rebuildSnapshotsIndex()
+            pruneAndPersistSnapshots(now: Date())
+            refreshLaunchAtLoginStatus()
+            Storage.shared.saveRefreshInterval(settings.refreshInterval)
         }
-        rebuildSnapshotsIndex()
-        pruneAndPersistSnapshots(now: Date())
-        refreshLaunchAtLoginStatus()
-        Storage.shared.saveRefreshInterval(settings.refreshInterval)
     }
     
     func loadSettings() {
@@ -188,10 +190,20 @@ final class AppViewModel: ObservableObject {
         }
     }
     
-    func saveSettings(_ newSettings: AppSettings) {
+    func saveSettings(_ newSettings: AppSettings) throws {
         var persistedSettings = newSettings
+        let previousLaunchAtLogin = launchAtLoginEnabled
         setLaunchAtLoginEnabled(newSettings.launchAtLogin)
         persistedSettings.launchAtLogin = launchAtLoginEnabled
+
+        do {
+            try Storage.shared.saveSettings(persistedSettings)
+        } catch {
+            if launchAtLoginEnabled != previousLaunchAtLogin {
+                _ = setLaunchAtLoginEnabled(previousLaunchAtLogin)
+            }
+            throw error
+        }
 
         settings = persistedSettings
         trendWindow = persistedSettings.dashboardTrendWindow
@@ -210,7 +222,6 @@ final class AppViewModel: ObservableObject {
         ensureManualOrderContainsCurrentAccounts()
         Storage.shared.saveUsageData(usageData)
         removeSnapshotsForDeletedAccounts(validIDs: Set(persistedSettings.accounts.map(\.id)))
-        Storage.shared.saveSettings(persistedSettings)
         Storage.shared.saveRefreshInterval(persistedSettings.refreshInterval)
         onSettingsSaved?()
     }

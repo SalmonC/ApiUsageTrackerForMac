@@ -13,6 +13,7 @@ struct SettingsView: View {
     @State private var hotkeyBeforeRecording: HotkeySetting?
     @State private var hotkeyError: String?
     @State private var saveButtonState: SaveButtonState = .normal
+    @State private var saveErrorMessage: String?
     @State private var savedDraftSignature: String = ""
     @State private var pendingDeleteAccount: APIAccount?
     @State private var isCapabilityNoticeExpanded: Bool = false
@@ -84,6 +85,14 @@ struct SettingsView: View {
             Text(language == .english
                  ? "This removes account config and deletes stored API key from Keychain."
                  : "将删除该账号配置，并移除钥匙串中已保存的 API Key。")
+        }
+        .alert(
+            language == .english ? "Save Failed" : "保存失败",
+            isPresented: saveErrorBinding
+        ) {
+            Button(language == .english ? "OK" : "确定", role: .cancel) {}
+        } message: {
+            Text(saveErrorMessage ?? "")
         }
     }
 
@@ -798,7 +807,12 @@ struct SettingsView: View {
             launchAtLogin: launchAtLogin,
             menuBarPinnedItems: normalizedMenuBarPinnedItems()
         )
-        viewModel.saveSettings(settings)
+        do {
+            try viewModel.saveSettings(settings)
+        } catch {
+            saveErrorMessage = localizedSaveError(error)
+            return
+        }
         viewModel.setDashboardSortMode(dashboardSortMode)
         launchAtLogin = viewModel.launchAtLoginEnabled
         savedDraftSignature = currentDraftSignature()
@@ -810,6 +824,31 @@ struct SettingsView: View {
             withAnimation {
                 saveButtonState = .normal
             }
+        }
+    }
+
+    private var saveErrorBinding: Binding<Bool> {
+        Binding(
+            get: { saveErrorMessage != nil },
+            set: { isPresented in
+                if !isPresented { saveErrorMessage = nil }
+            }
+        )
+    }
+
+    private func localizedSaveError(_ error: Error) -> String {
+        guard language == .english else { return error.localizedDescription }
+        switch error {
+        case SettingsPersistenceError.defaultsUnavailable:
+            return "App settings storage is unavailable. No changes were saved."
+        case SettingsPersistenceError.encodeFailed:
+            return "Settings could not be encoded. No changes were saved."
+        case SettingsPersistenceError.keychainFailed(let underlying):
+            return "API keys could not be saved securely: \(underlying.localizedDescription)"
+        case SettingsPersistenceError.defaultsVerificationFailed:
+            return "Settings verification failed. API keys were restored to their previous state where possible."
+        default:
+            return error.localizedDescription
         }
     }
 

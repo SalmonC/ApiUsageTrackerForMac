@@ -5,7 +5,7 @@ A macOS menu bar application for tracking API usage quotas from various AI provi
 <p align="center">
   <img src="https://img.shields.io/badge/platform-macOS%2014.0+-blue" alt="Platform">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
-  <img src="https://img.shields.io/badge/version-1.0.9-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-1.0.10-blue" alt="Version">
 </p>
 
 ---
@@ -84,6 +84,16 @@ hdiutil create -srcfolder "$APP_PATH" -volname "QuotaPulse" -fs HFS+ -format UDZ
 
 For Sparkle release/appcast workflow, see:
 `scripts/release/README.md`
+
+For a stable local signature and Data Protection Keychain access, use:
+
+```bash
+INSTALL=1 ./scripts/build-secure-local-release.sh
+```
+
+The script prefers a Developer ID Application identity when available, otherwise
+uses the local Apple Development identity. A Developer ID plus notarization is still
+required for normal public distribution without Gatekeeper warnings.
 
 ### Automated Verification (No Manual Install)
 
@@ -215,6 +225,15 @@ hdiutil create -srcfolder "$APP_PATH" -volname "QuotaPulse" -fs HFS+ -format UDZ
 Sparkle 发布 / appcast 流程见：
 `scripts/release/README.md`
 
+需要稳定的本机签名与 Data Protection Keychain 访问时，使用：
+
+```bash
+INSTALL=1 ./scripts/build-secure-local-release.sh
+```
+
+脚本优先使用 Developer ID Application；若本机没有，则使用本机 Apple Development
+身份。要实现面向公众且无 Gatekeeper 警告的正规分发，仍需 Developer ID 与公证。
+
 ### 自动验证（无需手动安装）
 
 ```bash
@@ -278,6 +297,13 @@ Sparkle 发布 / appcast 流程见：
 ---
 
 ## Changelog / 更新日志
+
+### v1.0.10 (2026-08-11)
+
+- **Security / 安全**: Move API keys to the macOS Data Protection Keychain while retaining device-only, after-first-unlock background access / 将 API Key 迁移到 macOS Data Protection Keychain，同时保留仅限本机、首次解锁后可后台读取的策略
+- **Migration / 迁移**: Legacy storage is read only when the v3 item is genuinely absent; authorization failures no longer cause a second fallback query, and the legacy snapshot is retained for v1.0.9 rollback / 仅在 v3 条目确实不存在时读取旧存储，授权失败不再触发第二次回查，并保留旧快照供 v1.0.9 回滚
+- **Reliability / 可靠性**: Verify complete keyring writes, keep an empty v3 tombstone, fail closed on unreadable storage, and show settings-save failures instead of silently losing credentials / 校验完整 Keyring 写入、保留空 v3 墓碑、存储不可读时拒绝覆盖，并明确显示设置保存失败
+- **Signing / 签名**: Add a stable local signing and packaging workflow with Hardened Runtime and explicit signature verification / 增加稳定的本机签名、Hardened Runtime、打包与签名校验流程
 
 ### v1.0.9 (2026-07-14)
 
