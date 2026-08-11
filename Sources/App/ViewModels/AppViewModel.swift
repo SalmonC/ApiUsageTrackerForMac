@@ -31,6 +31,12 @@ final class AppViewModel: ObservableObject {
     private let snapshotRetentionDays: TimeInterval = 45 * 86_400
     private let snapshotMaxPerAccount = 5_000
     private let snapshotDuplicateWindow: TimeInterval = 45
+    private var shortRetryTask: Task<Void, Never>?
+    private var shortRetryFailureCounts: [UUID: Int] = [:]
+    private let shortRetryIntervalNanoseconds: UInt64 = 10_000_000_000
+    private let shortRetryMaxFailures = 3
+    private var didLogPreservedEmptyRefresh = false
+    private var didLogEmptyRefreshResults = false
     var onSettingsSaved: (() -> Void)?
     var onOpenSettings: (() -> Void)?
     
@@ -76,13 +82,26 @@ final class AppViewModel: ObservableObject {
     
     func refreshAll(reloadSettings: Bool = true) async {
         guard !isLoading else { return }
+        cancelShortRetryLoop()
+        shortRetryFailureCounts.removeAll()
         isLoading = true
+        defer { isLoading = false }
         if reloadSettings {
             loadSettings()
         }
         let language = settings.language
         let activeAccounts = settings.accounts.filter {
             $0.provider.supportsRemainingQuotaQuery && $0.isEnabled && (!$0.provider.requiresCredential || !$0.apiKey.isEmpty)
+        }
+        if activeAccounts.isEmpty, shouldPreserveCachedUsageWhenNoActiveAccounts {
+            if !didLogPreservedEmptyRefresh {
+                didLogPreservedEmptyRefresh = true
+                Logger.critical(
+                    "Refresh skipped to preserve cached usage data: configuredAccounts=\(settings.accounts.count), cachedUsage=\(usageData.count), snapshots=\(usageSnapshots.count)"
+                )
+            }
+            WidgetCenter.shared.reloadAllTimelines()
+            return
         }
         var orderedResults = Array<UsageData?>(repeating: nil, count: activeAccounts.count)
         
@@ -100,9 +119,22 @@ final class AppViewModel: ObservableObject {
         
         let previousByAccount = Dictionary(uniqueKeysWithValues: usageData.map { ($0.accountId, $0) })
         let newData = orderedResults.compactMap { $0 }
+            .map { mergeFailureWithPrevious($0, previous: previousByAccount[$0.accountId]) }
             .map { applyDeepSeekConsumptionEstimate(to: $0, previous: previousByAccount[$0.accountId]) }
             .map(resolveRefreshTime)
+        if newData.isEmpty, !activeAccounts.isEmpty, !usageData.isEmpty {
+            if !didLogEmptyRefreshResults {
+                didLogEmptyRefreshResults = true
+                Logger.critical(
+                    "Refresh produced no results; preserving cached usage data: activeAccounts=\(activeAccounts.count), cachedUsage=\(usageData.count)"
+                )
+            }
+            WidgetCenter.shared.reloadAllTimelines()
+            return
+        }
         
+        didLogPreservedEmptyRefresh = false
+        didLogEmptyRefreshResults = false
         usageData = newData
         ensureManualOrderContainsCurrentAccounts()
         Storage.shared.saveUsageData(newData)
@@ -111,7 +143,7 @@ final class AppViewModel: ObservableObject {
         
         WidgetCenter.shared.reloadAllTimelines()
         
-        isLoading = false
+        scheduleShortRetryIfNeeded(for: activeAccounts, after: newData)
     }
 
     func refreshAccount(_ accountId: UUID) async {
@@ -132,8 +164,9 @@ final class AppViewModel: ObservableObject {
             return
         }
         let previousData = usageData.first(where: { $0.accountId == accountId })
+        let mergedData = mergeFailureWithPrevious(fetched, previous: previousData)
         let updatedData = resolveRefreshTime(
-            applyDeepSeekConsumptionEstimate(to: fetched, previous: previousData)
+            applyDeepSeekConsumptionEstimate(to: mergedData, previous: previousData)
         )
 
         if let existingIndex = usageData.firstIndex(where: { $0.accountId == accountId }) {
@@ -147,6 +180,12 @@ final class AppViewModel: ObservableObject {
         appendSnapshots(from: [updatedData], capturedAt: Date())
         Storage.shared.saveCycleLearningState(cycleLearningState)
         WidgetCenter.shared.reloadAllTimelines()
+        if updatedData.errorMessage == nil {
+            shortRetryFailureCounts[accountId] = nil
+            cancelShortRetryLoopIfNoFailures()
+        } else {
+            scheduleShortRetryIfNeeded(for: [account], after: [updatedData])
+        }
     }
     
     func saveSettings(_ newSettings: AppSettings) {
@@ -156,6 +195,8 @@ final class AppViewModel: ObservableObject {
 
         settings = persistedSettings
         trendWindow = persistedSettings.dashboardTrendWindow
+        cancelShortRetryLoop()
+        shortRetryFailureCounts.removeAll()
         let accountLookup = Dictionary(uniqueKeysWithValues: persistedSettings.accounts.map { ($0.id, $0) })
         usageData = usageData
             .filter { accountLookup[$0.accountId] != nil }
@@ -258,6 +299,20 @@ final class AppViewModel: ObservableObject {
         UsageDataSorting.sort(usageData, mode: dashboardSortMode, manualOrder: dashboardManualOrder)
     }
 
+    private var shouldPreserveCachedUsageWhenNoActiveAccounts: Bool {
+        guard !usageData.isEmpty || !usageSnapshots.isEmpty else { return false }
+        if settings.accounts.isEmpty {
+            return true
+        }
+        let queryableAccounts = settings.accounts.filter {
+            $0.provider.supportsRemainingQuotaQuery && $0.isEnabled
+        }
+        guard !queryableAccounts.isEmpty else { return false }
+        return queryableAccounts.allSatisfy { account in
+            account.provider.requiresCredential && account.apiKey.isEmpty
+        }
+    }
+
     func setDashboardSortMode(_ mode: DashboardSortMode) {
         let previousMode = dashboardSortMode
         let currentVisibleOrder = displayUsageData.map(\.accountId)
@@ -331,6 +386,135 @@ final class AppViewModel: ObservableObject {
         guard dashboardSortMode == .manual else { return }
         ensureManualOrderContainsCurrentAccounts()
         Storage.shared.saveDashboardManualOrder(dashboardManualOrder)
+    }
+
+    private func mergeFailureWithPrevious(_ fetched: UsageData, previous: UsageData?) -> UsageData {
+        guard fetched.errorMessage != nil, let previous else {
+            return fetched
+        }
+
+        var merged = previous
+        merged.accountName = fetched.accountName
+        merged.provider = fetched.provider
+        merged.errorMessage = fetched.errorMessage
+        return merged
+    }
+
+    private func scheduleShortRetryIfNeeded(for accounts: [APIAccount], after data: [UsageData]) {
+        let failedIDs = Set(data.filter { $0.errorMessage != nil }.map(\.accountId))
+        guard !failedIDs.isEmpty else {
+            shortRetryFailureCounts.removeAll()
+            cancelShortRetryLoop()
+            return
+        }
+
+        let retryAccounts = accounts.filter { account in
+            failedIDs.contains(account.id) && (shortRetryFailureCounts[account.id] ?? 0) < shortRetryMaxFailures
+        }
+        guard !retryAccounts.isEmpty else {
+            cancelShortRetryLoop()
+            return
+        }
+
+        for account in retryAccounts where shortRetryFailureCounts[account.id] == nil {
+            shortRetryFailureCounts[account.id] = 0
+        }
+
+        shortRetryTask?.cancel()
+        shortRetryTask = Task { [weak self] in
+            await self?.runShortRetryLoop(accounts: retryAccounts)
+        }
+    }
+
+    private func runShortRetryLoop(accounts: [APIAccount]) async {
+        var pendingAccounts = accounts
+
+        while !Task.isCancelled && !pendingAccounts.isEmpty {
+            do {
+                try await Task.sleep(nanoseconds: shortRetryIntervalNanoseconds)
+            } catch {
+                return
+            }
+
+            pendingAccounts = await retryFailedAccountsOnce(pendingAccounts)
+        }
+
+        shortRetryTask = nil
+    }
+
+    private func retryFailedAccountsOnce(_ accounts: [APIAccount]) async -> [APIAccount] {
+        let failedIDs = Set(usageData.filter { $0.errorMessage != nil }.map(\.accountId))
+        let retryAccounts = accounts.filter { account in
+            failedIDs.contains(account.id) && (shortRetryFailureCounts[account.id] ?? 0) < shortRetryMaxFailures
+        }
+        guard !retryAccounts.isEmpty else { return [] }
+
+        retryAccounts.forEach { refreshingAccountIDs.insert($0.id) }
+        defer {
+            retryAccounts.forEach { refreshingAccountIDs.remove($0.id) }
+        }
+
+        let language = settings.language
+        var orderedResults = Array<UsageData?>(repeating: nil, count: retryAccounts.count)
+        await withTaskGroup(of: (Int, UsageData?).self) { group in
+            for (index, account) in retryAccounts.enumerated() {
+                group.addTask {
+                    return (index, await Self.fetchUsageData(for: account, language: language))
+                }
+            }
+
+            for await (index, data) in group {
+                orderedResults[index] = data
+            }
+        }
+
+        var updatedItems: [UsageData] = []
+        for (index, fetched) in orderedResults.enumerated() {
+            guard let fetched else { continue }
+            let account = retryAccounts[index]
+            let previousData = usageData.first(where: { $0.accountId == account.id })
+            let mergedData = mergeFailureWithPrevious(fetched, previous: previousData)
+            let updatedData = resolveRefreshTime(
+                applyDeepSeekConsumptionEstimate(to: mergedData, previous: previousData)
+            )
+
+            if let existingIndex = usageData.firstIndex(where: { $0.accountId == account.id }) {
+                usageData[existingIndex] = updatedData
+            } else {
+                usageData.append(updatedData)
+            }
+            updatedItems.append(updatedData)
+
+            if updatedData.errorMessage == nil {
+                shortRetryFailureCounts[account.id] = nil
+            } else {
+                shortRetryFailureCounts[account.id, default: 0] += 1
+            }
+        }
+
+        guard !updatedItems.isEmpty else { return retryAccounts }
+
+        ensureManualOrderContainsCurrentAccounts()
+        Storage.shared.saveUsageData(usageData)
+        appendSnapshots(from: updatedItems, capturedAt: Date())
+        Storage.shared.saveCycleLearningState(cycleLearningState)
+        WidgetCenter.shared.reloadAllTimelines()
+
+        return retryAccounts.filter { account in
+            usageData.first(where: { $0.accountId == account.id })?.errorMessage != nil &&
+                (shortRetryFailureCounts[account.id] ?? 0) < shortRetryMaxFailures
+        }
+    }
+
+    private func cancelShortRetryLoop() {
+        shortRetryTask?.cancel()
+        shortRetryTask = nil
+    }
+
+    private func cancelShortRetryLoopIfNoFailures() {
+        guard usageData.allSatisfy({ $0.errorMessage == nil }) else { return }
+        cancelShortRetryLoop()
+        shortRetryFailureCounts.removeAll()
     }
 
     private func resolveRefreshTime(_ data: UsageData) -> UsageData {
@@ -675,13 +859,13 @@ final class AppViewModel: ObservableObject {
     }
 
     private func applyDeepSeekConsumptionEstimate(to data: UsageData, previous: UsageData?) -> UsageData {
-        guard data.provider == .deepSeek, !data.currencyBalances.isEmpty else { return data }
+        guard data.provider == .deepSeek, !data.displayCurrencyBalances.isEmpty else { return data }
         var updated = data
         updated.balanceDetails = DeepSeekBalanceLogic.addEstimatedConsumption(
-            to: data.currencyBalances,
-            previous: previous?.currencyBalances ?? []
+            to: data.displayCurrencyBalances,
+            previous: previous?.displayCurrencyBalances ?? []
         )
-        updated.tokenRemaining = updated.currencyBalances.first?.total
+        updated.tokenRemaining = updated.displayCurrencyBalances.first?.total
         return updated
     }
 

@@ -478,13 +478,15 @@ private struct UsageRowView: View {
             VStack(alignment: .leading, spacing: quotaCycles.count > 1 ? 6 : 4) {
                 topRow
 
-                if let error = data.errorMessage {
-                    errorRow(error)
-                } else {
+                if hasDisplayableUsageContent {
                     quotaCycleRows
                     if data.provider == .deepSeek {
                         deepSeekBalanceTrendRow
                     }
+                } else if let error = data.errorMessage {
+                    errorRow(error)
+                } else {
+                    quotaCycleRows
                 }
             }
 
@@ -528,10 +530,16 @@ private struct UsageRowView: View {
             }
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(data.accountName)
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .lineLimit(1)
+                HStack(spacing: 5) {
+                    Text(data.accountName)
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .lineLimit(1)
+
+                    if data.errorMessage != nil {
+                        queryFailedBadge
+                    }
+                }
 
                 if shouldShowProviderSubtitle {
                     HStack(spacing: 6) {
@@ -559,10 +567,6 @@ private struct UsageRowView: View {
     private var trailingStatus: some View {
         if isRefreshing {
             ProgressView().scaleEffect(0.75)
-        } else if data.errorMessage != nil {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundColor(.orange)
-                .font(.system(size: 14))
         } else if dualRingCycles.count >= 2 {
             HStack(spacing: 8) {
                 ForEach(dualRingCycles.prefix(2)) { cycle in
@@ -588,7 +592,7 @@ private struct UsageRowView: View {
                 tint: ringColor(for: remainingPercent),
                 language: language
             )
-        } else if (data.provider == .deepSeek || data.provider == .kimi || data.provider == .openAI), let balance = data.currencyBalances.first {
+        } else if let balance = primaryDisplayBalance {
             Text(formatCurrency(balance.total, currency: balance.currency))
                 .font(.system(.headline, design: .rounded))
                 .fontWeight(.semibold)
@@ -598,6 +602,10 @@ private struct UsageRowView: View {
                 .font(.system(.headline, design: .rounded))
                 .fontWeight(.semibold)
                 .foregroundColor(remainingColor)
+        } else if data.errorMessage != nil {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundColor(.orange)
+                .font(.system(size: 14))
         } else {
             Text("--")
                 .font(.subheadline)
@@ -630,9 +638,9 @@ private struct UsageRowView: View {
 
     @ViewBuilder
     private var quotaCycleRows: some View {
-        if data.provider == .deepSeek, !data.currencyBalances.isEmpty {
+        if data.provider == .deepSeek, !deepSeekDisplayBalances.isEmpty {
             VStack(alignment: .leading, spacing: 5) {
-                ForEach(data.currencyBalances) { balance in
+                ForEach(deepSeekDisplayBalances) { balance in
                     deepSeekBalanceRow(balance)
                 }
             }
@@ -957,6 +965,13 @@ private struct UsageRowView: View {
         preferredRingCycle?.remainingPercentage != nil
     }
 
+    private var hasDisplayableUsageContent: Bool {
+        if data.provider == .deepSeek, !deepSeekDisplayBalances.isEmpty {
+            return true
+        }
+        return !quotaCycles.isEmpty || data.tokenRemaining != nil
+    }
+
     private var dualRingCycles: [QuotaCycle] {
         guard quotaCycles.count >= 2 else { return [] }
         return quotaCycles
@@ -967,7 +982,7 @@ private struct UsageRowView: View {
     }
 
     private var remainingColor: Color {
-        if data.provider == .deepSeek, let balance = data.currencyBalances.first {
+        if data.provider == .deepSeek, let balance = deepSeekDisplayBalances.first {
             return deepSeekBalanceColor(for: balance.total)
         }
         if data.tokenTotal != nil && data.tokenTotal! > 0 {
@@ -985,6 +1000,20 @@ private struct UsageRowView: View {
 
     private func deepSeekBalanceColor(for balance: Double) -> Color {
         balance < deepSeekBalanceThreshold ? .red : .green
+    }
+
+    private var deepSeekDisplayBalances: [CurrencyBalance] {
+        data.provider == .deepSeek ? data.displayCurrencyBalances : []
+    }
+
+    private var primaryDisplayBalance: CurrencyBalance? {
+        if data.provider == .deepSeek {
+            return deepSeekDisplayBalances.first
+        }
+        if data.provider == .kimi || data.provider == .openAI {
+            return data.currencyBalances.first
+        }
+        return nil
     }
     
     private func formatValue(_ value: Double) -> String {
@@ -1011,6 +1040,17 @@ private struct UsageRowView: View {
             .foregroundColor(confidenceColor)
             .cornerRadius(4)
             .help(confidence.reason)
+    }
+
+    private var queryFailedBadge: some View {
+        Text(language == .english ? "Query failed" : "查询失败")
+            .font(.system(size: 9, weight: .semibold))
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1.5)
+            .background(Color.orange.opacity(0.14))
+            .foregroundColor(.orange)
+            .cornerRadius(4)
+            .help(data.errorMessage ?? "")
     }
 
     private var confidenceColor: Color {

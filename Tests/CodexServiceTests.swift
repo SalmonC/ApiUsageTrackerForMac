@@ -56,6 +56,25 @@ final class CodexServiceTests: XCTestCase {
         XCTAssertEqual(result.monthlyRefreshTime?.timeIntervalSince1970, 1_782_354_954)
     }
 
+    func testParsesWeeklyOnlyCodexWindowWithoutFakingFiveHourQuota() throws {
+        let payload = """
+        {"plan_type":"plus","rate_limit":{"allowed":true,"limit_reached":false,"primary_window":{"used_percent":43,"limit_window_seconds":604800,"reset_at":1782354954}}}
+        """
+
+        let result = try CodexService.parseWhamUsageResponse(Data(payload.utf8))
+
+        XCTAssertNil(result.used)
+        XCTAssertNil(result.remaining)
+        XCTAssertNil(result.total)
+        XCTAssertNil(result.refreshTime)
+        XCTAssertNil(result.primaryCycleIsPercentage)
+        XCTAssertEqual(result.monthlyUsed, 43)
+        XCTAssertEqual(result.monthlyRemaining, 57)
+        XCTAssertEqual(result.monthlyTotal, 100)
+        XCTAssertEqual(result.secondaryCycleIsPercentage, true)
+        XCTAssertEqual(result.monthlyRefreshTime?.timeIntervalSince1970, 1_782_354_954)
+    }
+
     func testThrowsHelpfulCodexErrorMessage() {
         let payload = """
         {"error":{"code":-32603,"message":"failed to fetch codex rate limits: error sending request for url (https://chatgpt.com/backend-api/wham/usage)"},"id":2}

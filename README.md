@@ -5,7 +5,7 @@ A macOS menu bar application for tracking API usage quotas from various AI provi
 <p align="center">
   <img src="https://img.shields.io/badge/platform-macOS%2014.0+-blue" alt="Platform">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
-  <img src="https://img.shields.io/badge/version-1.0.5-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-1.0.9-blue" alt="Version">
 </p>
 
 ---
@@ -278,6 +278,27 @@ Sparkle 发布 / appcast 流程见：
 ---
 
 ## Changelog / 更新日志
+
+### v1.0.9 (2026-07-14)
+
+- **Fix / 修复**: DeepSeek dashboard and menu bar pinned balance now fall back to the last cached balance when the latest query fails or older cache lacks detailed currency records / DeepSeek 查询失败或旧缓存缺少币种明细时，看板与菜单栏固定余额会回退显示上次缓存余额
+- **Improve / 优化**: Query failure remains visible on the dashboard while cached DeepSeek balance is preserved / 保留 DeepSeek 缓存余额显示的同时，在看板继续标注查询失败
+
+### v1.0.8 (2026-07-13)
+- **Fix / 修复**: Codex quota parsing now classifies windows by duration, so weekly-only responses no longer appear as 5-hour remaining quota in the menu bar / Codex 额度解析改为按窗口时长分类，只有周额度时不再把周余量误显示为菜单栏 5 小时余量
+- **Improve / 优化**: Unsupported pinned menu bar values are omitted until the provider returns that metric again / 不支持的菜单栏固定数据会默认隐藏，待供应商恢复对应指标后自动正常显示
+- **Verify / 验证**: Passed unit tests, Release build, installer DMG creation, local replacement install, and launch verification / 已通过单元测试、Release 构建、安装器 DMG 生成、本地替换安装与启动验证
+
+### v1.0.7 (2026-07-06)
+- **Fix / 修复**: Prevent startup refresh from overwriting cached dashboard data and DeepSeek balance history when settings or Keychain credentials are temporarily unavailable / 当设置或钥匙串凭证临时不可用时，启动刷新不再用空结果覆盖看板缓存与 DeepSeek 余额历史
+- **Improve / 优化**: Add rate-limited critical logs for App Group storage, settings decoding, Keychain loading, and cache-preservation guards without recording API keys / 为 App Group 存储、设置解码、钥匙串读取与缓存保护增加限量关键错误日志，且不记录 API Key
+- **Verify / 验证**: Passed unit tests, Release build, installer DMG creation, local replacement install, and launch verification / 已通过单元测试、Release 构建、安装器 DMG 生成、本地替换安装与启动验证
+
+### v1.0.6 (2026-07-03)
+- **Fix / 修复**: Provider query failures now keep displaying the last successful data in the dashboard and menu bar, with a query-failed badge on the dashboard card / 供应商查询失败时，看板与菜单栏继续显示上一次成功数据，并在看板卡片上标注查询失败
+- **Improve / 优化**: Failed providers enter a short 10-second retry cadence and return to the normal refresh schedule after success or three consecutive retry failures / 查询失败的供应商进入 10 秒短重试节奏，成功或连续 3 次重试失败后恢复原有刷新节奏
+- **Change / 调整**: Removed the unfinished phone-sync implementation from the Mac app codebase / 移除未完成的手机同步实现
+- **Verify / 验证**: Passed unit tests, Release build, installer DMG creation, local replacement install, and launch verification / 已通过单元测试、Release 构建、安装器 DMG 生成、本地替换安装与启动验证
 
 ### v1.0.5 (2026-07-02)
 - **New / 新增**: Add optional menu bar pinned values for DeepSeek balance, Codex 5-hour remaining quota, and Codex weekly remaining quota, each with custom label text / 新增菜单栏固定数据展示，支持 DeepSeek 余额、Codex 5 小时余量与 Codex 周余量，并可自定义前缀文本

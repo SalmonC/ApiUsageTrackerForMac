@@ -117,6 +117,32 @@ final class UsageMetricsLogicTests: XCTestCase {
         XCTAssertEqual(balanceConfidence.level.label(language: .chinese), "余额")
     }
 
+    func testDeepSeekDisplayBalancesFallbackToCachedRemainingBalance() {
+        let cachedLegacyBalance = UsageData(
+            accountId: UUID(),
+            accountName: "DeepSeek",
+            provider: .deepSeek,
+            tokenRemaining: 4.54,
+            tokenUsed: nil,
+            tokenTotal: nil,
+            refreshTime: nil,
+            lastUpdated: Date(),
+            errorMessage: "查询失败：鉴权失败（401/403），请更新凭证",
+            monthlyRemaining: nil,
+            monthlyTotal: nil,
+            monthlyUsed: nil,
+            monthlyRefreshTime: nil,
+            nextRefreshTime: nil,
+            subscriptionPlan: nil,
+            balanceDetails: nil
+        )
+
+        XCTAssertEqual(cachedLegacyBalance.currencyBalances.count, 0)
+        XCTAssertEqual(cachedLegacyBalance.displayCurrencyBalances.count, 1)
+        XCTAssertEqual(cachedLegacyBalance.displayCurrencyBalances.first?.currency, "CNY")
+        XCTAssertEqual(cachedLegacyBalance.displayCurrencyBalances.first?.total, 4.54)
+    }
+
     func testRetryableErrorClassification() {
         XCTAssertTrue(UsageMetricsLogic.isRetryableFetchError(APIError.httpError(500)))
         XCTAssertTrue(UsageMetricsLogic.isRetryableFetchError(APIError.httpError(429)))

@@ -300,17 +300,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         switch metric {
         case .deepSeekBalance:
             guard
-                let data = viewModel.usageData.first(where: { $0.provider == .deepSeek && $0.errorMessage == nil }),
-                let balance = preferredDeepSeekBalance(from: data.currencyBalances)
+                let data = viewModel.usageData.first(where: { $0.provider == .deepSeek }),
+                let balance = preferredDeepSeekBalance(from: data.displayCurrencyBalances)
             else { return nil }
             return formatMenuBarCurrency(balance.total, currency: balance.currency)
         case .codexFiveHourRemaining:
-            guard let data = viewModel.usageData.first(where: { $0.provider == .codex && $0.errorMessage == nil }) else {
+            guard let data = viewModel.usageData.first(where: { $0.provider == .codex }) else {
                 return nil
             }
             return formatMenuBarPercent(primaryRemainingPercentage(for: data))
         case .codexWeeklyRemaining:
-            guard let data = viewModel.usageData.first(where: { $0.provider == .codex && $0.errorMessage == nil }) else {
+            guard let data = viewModel.usageData.first(where: { $0.provider == .codex }) else {
                 return nil
             }
             return formatMenuBarPercent(secondaryRemainingPercentage(for: data))
@@ -358,7 +358,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let value else { return nil }
         return "\(Int(min(max(value, 0), 100).rounded()))%"
     }
-    
+
     private func setupGlobalHotKey() {
         installGlobalHotKeyHandlerIfNeeded()
         updateGlobalHotKey()

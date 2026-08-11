@@ -471,6 +471,22 @@ struct UsageData: Codable, Equatable {
     var balanceDetails: [CurrencyBalance]? = nil
 
     var currencyBalances: [CurrencyBalance] { balanceDetails ?? [] }
+    var displayCurrencyBalances: [CurrencyBalance] {
+        if let balanceDetails, !balanceDetails.isEmpty {
+            return balanceDetails
+        }
+        if provider == .deepSeek, let tokenRemaining {
+            return [
+                CurrencyBalance(
+                    currency: "CNY",
+                    total: tokenRemaining,
+                    granted: 0,
+                    toppedUp: tokenRemaining
+                )
+            ]
+        }
+        return []
+    }
     
     var displayRemaining: String {
         guard let remaining = tokenRemaining else { return "--" }
@@ -595,43 +611,77 @@ final class Storage {
     private let dashboardManualOrderKey = "dashboardManualOrder"
     private let cycleLearningKey = "cycleLearningState"
     private let alertNotificationStateKey = "alertNotificationState"
+    private var emittedCriticalLogKeys: Set<String> = []
     
     private var userDefaults: UserDefaults? {
         UserDefaults(suiteName: suiteName)
     }
     
     private init() {}
+
+    private func logCriticalOnce(_ key: String, _ message: String) {
+        guard !emittedCriticalLogKeys.contains(key) else { return }
+        emittedCriticalLogKeys.insert(key)
+        Logger.critical(message)
+    }
     
     func saveUsageData(_ data: [UsageData]) {
-        guard let defaults = userDefaults else { return }
-        if let encoded = try? JSONEncoder().encode(data) {
+        guard let defaults = userDefaults else {
+            logCriticalOnce("saveUsageData.defaultsUnavailable", "App Group UserDefaults unavailable while saving usage data")
+            return
+        }
+        do {
+            let encoded = try JSONEncoder().encode(data)
             defaults.set(encoded, forKey: usageKey)
+        } catch {
+            logCriticalOnce("saveUsageData.encodeFailed", "Failed to encode usage data: count=\(data.count), error=\(error.localizedDescription)")
         }
     }
     
     func loadUsageData() -> [UsageData] {
-        guard let defaults = userDefaults,
-              let data = defaults.data(forKey: usageKey),
-              let decoded = try? JSONDecoder().decode([UsageData].self, from: data) else {
+        guard let defaults = userDefaults else {
+            logCriticalOnce("loadUsageData.defaultsUnavailable", "App Group UserDefaults unavailable while loading usage data")
             return []
         }
-        return decoded
+        guard let data = defaults.data(forKey: usageKey) else {
+            return []
+        }
+        do {
+            return try JSONDecoder().decode([UsageData].self, from: data)
+        } catch {
+            logCriticalOnce("loadUsageData.decodeFailed", "Failed to decode usage data: bytes=\(data.count), error=\(error.localizedDescription)")
+            return []
+        }
     }
 
     func saveUsageSnapshots(_ snapshots: [UsageSnapshot]) {
-        guard let defaults = userDefaults else { return }
-        if let encoded = try? JSONEncoder().encode(snapshots) {
+        guard let defaults = userDefaults else {
+            logCriticalOnce("saveUsageSnapshots.defaultsUnavailable", "App Group UserDefaults unavailable while saving usage snapshots")
+            return
+        }
+        do {
+            let encoded = try JSONEncoder().encode(snapshots)
             defaults.set(encoded, forKey: usageSnapshotsKey)
+        } catch {
+            logCriticalOnce("saveUsageSnapshots.encodeFailed", "Failed to encode usage snapshots: count=\(snapshots.count), error=\(error.localizedDescription)")
         }
     }
 
     func loadUsageSnapshots() -> [UsageSnapshot] {
-        guard let defaults = userDefaults,
-              let data = defaults.data(forKey: usageSnapshotsKey),
-              let decoded = try? JSONDecoder().decode([UsageSnapshot].self, from: data) else {
+        guard let defaults = userDefaults else {
+            logCriticalOnce("loadUsageSnapshots.defaultsUnavailable", "App Group UserDefaults unavailable while loading usage snapshots")
             return []
         }
-        return decoded.sorted { $0.capturedAt < $1.capturedAt }
+        guard let data = defaults.data(forKey: usageSnapshotsKey) else {
+            return []
+        }
+        do {
+            let decoded = try JSONDecoder().decode([UsageSnapshot].self, from: data)
+            return decoded.sorted { $0.capturedAt < $1.capturedAt }
+        } catch {
+            logCriticalOnce("loadUsageSnapshots.decodeFailed", "Failed to decode usage snapshots: bytes=\(data.count), error=\(error.localizedDescription)")
+            return []
+        }
     }
 
     func saveCycleLearningState(_ state: [String: CycleLearningState]) {
@@ -651,7 +701,10 @@ final class Storage {
     }
     
     func saveSettings(_ settings: AppSettings) {
-        guard let defaults = userDefaults else { return }
+        guard let defaults = userDefaults else {
+            logCriticalOnce("saveSettings.defaultsUnavailable", "App Group UserDefaults unavailable while saving settings")
+            return
+        }
         let existingSettings = loadSettings(includeAPIKeys: false)
         let newAccountIDs = Set(settings.accounts.map(\.id))
         let keychainSnapshot = KeychainManager.shared.loadAPIKeys(for: settings.accounts.map(\.id))
@@ -695,19 +748,39 @@ final class Storage {
         
         if let encoded = try? JSONEncoder().encode(settingsWithoutKeys) {
             defaults.set(encoded, forKey: settingsKey)
+        } else {
+            logCriticalOnce("saveSettings.encodeFailed", "Failed to encode app settings: accounts=\(settings.accounts.count)")
         }
     }
     
     func loadSettings(includeAPIKeys: Bool = true) -> AppSettings {
-        guard let defaults = userDefaults,
-              let data = defaults.data(forKey: settingsKey),
-              var decoded = try? JSONDecoder().decode(AppSettings.self, from: data) else {
+        guard let defaults = userDefaults else {
+            logCriticalOnce("loadSettings.defaultsUnavailable", "App Group UserDefaults unavailable while loading settings")
             return .default
         }
+        guard let data = defaults.data(forKey: settingsKey) else {
+            return .default
+        }
+        let decodedSettings: AppSettings
+        do {
+            decodedSettings = try JSONDecoder().decode(AppSettings.self, from: data)
+        } catch {
+            logCriticalOnce("loadSettings.decodeFailed", "Failed to decode app settings: bytes=\(data.count), error=\(error.localizedDescription)")
+            return .default
+        }
+        var decoded = decodedSettings
         
         guard includeAPIKeys else { return decoded }
         
         let keyMap = KeychainManager.shared.loadAPIKeys(for: decoded.accounts.map(\.id))
+        let credentialAccountCount = decoded.accounts.filter { $0.provider.requiresCredential }.count
+        if credentialAccountCount > 0 && keyMap.isEmpty {
+            let statusText = KeychainManager.shared.lastKeyringLoadStatus.map(String.init) ?? "nil"
+            logCriticalOnce(
+                "loadSettings.emptyKeyMap",
+                "No API keys loaded from Keychain for configured credential accounts: accounts=\(credentialAccountCount), keyringStatus=\(statusText)"
+            )
+        }
         for i in decoded.accounts.indices {
             if let keychainKey = keyMap[decoded.accounts[i].id] {
                 decoded.accounts[i].apiKey = keychainKey

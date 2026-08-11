@@ -21,12 +21,64 @@ final class Logger {
         subsystem: Bundle.main.bundleIdentifier ?? "com.mactools.apiusagetracker",
         category: "app"
     )
+    private static let criticalLogFileName = "quotapulse_critical.log"
+    private static let criticalLogMaxBytes: UInt64 = 256 * 1024
     
     static func log(_ message: String) {
         #if DEBUG
         print("[QuotaPulse] \(message)")
         #endif
         os_log("%{public}@", log: logger, type: .default, message)
+    }
+
+    static func warning(_ message: String) {
+        os_log("%{public}@", log: logger, type: .error, "WARNING: \(message)")
+    }
+
+    static func critical(_ message: String) {
+        let line = "[\(Self.timestamp())] CRITICAL \(message)"
+        os_log("%{public}@", log: logger, type: .fault, line)
+        appendCriticalLog(line)
+    }
+
+    private static func appendCriticalLog(_ line: String) {
+        guard let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            return
+        }
+
+        let fileURL = documentsURL.appendingPathComponent(criticalLogFileName)
+        rotateCriticalLogIfNeeded(fileURL)
+
+        guard let data = (line + "\n").data(using: .utf8) else { return }
+        if FileManager.default.fileExists(atPath: fileURL.path) {
+            if let handle = try? FileHandle(forWritingTo: fileURL) {
+                defer { try? handle.close() }
+                _ = try? handle.seekToEnd()
+                _ = try? handle.write(contentsOf: data)
+            }
+        } else {
+            try? data.write(to: fileURL, options: .atomic)
+        }
+    }
+
+    private static func rotateCriticalLogIfNeeded(_ fileURL: URL) {
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: fileURL.path),
+              let size = attrs[.size] as? UInt64,
+              size > criticalLogMaxBytes else {
+            return
+        }
+
+        let rotatedURL = fileURL.deletingLastPathComponent()
+            .appendingPathComponent(fileURL.deletingPathExtension().lastPathComponent + ".1")
+            .appendingPathExtension(fileURL.pathExtension)
+        try? FileManager.default.removeItem(at: rotatedURL)
+        try? FileManager.default.moveItem(at: fileURL, to: rotatedURL)
+    }
+
+    private static func timestamp() -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.string(from: Date())
     }
 }
 
@@ -723,36 +775,118 @@ final class CodexService: UsageService {
         secondary: [String: Any]?,
         planType: String?
     ) -> UsageResult? {
-        let primaryUsed = parseNumber(primary["used_percent"] ?? primary["usedPercent"])
-        let primaryReset = parseResetDate(
-            primary["reset_at"] ?? primary["resets_at"] ?? primary["resetsAt"],
-            resetAfter: primary["reset_after_seconds"] ?? primary["resetAfterSeconds"]
-        )
-        let secondaryUsed = secondary.flatMap { parseNumber($0["used_percent"] ?? $0["usedPercent"]) }
-        let secondaryReset = secondary.flatMap {
-            parseResetDate(
-                $0["reset_at"] ?? $0["resets_at"] ?? $0["resetsAt"],
-                resetAfter: $0["reset_after_seconds"] ?? $0["resetAfterSeconds"]
-            )
+        let primaryWindow = parseCodexWindow(primary)
+        let secondaryWindow = secondary.map(parseCodexWindow)
+        var fiveHourWindow: CodexQuotaWindow?
+        var weeklyWindow: CodexQuotaWindow?
+
+        assignCodexWindow(primaryWindow, fallbackKind: .fiveHour, fiveHour: &fiveHourWindow, weekly: &weeklyWindow)
+        if let secondaryWindow {
+            assignCodexWindow(secondaryWindow, fallbackKind: .weekly, fiveHour: &fiveHourWindow, weekly: &weeklyWindow)
         }
 
-        guard primaryUsed != nil || secondaryUsed != nil || primaryReset != nil || secondaryReset != nil else {
+        guard fiveHourWindow?.hasData == true || weeklyWindow?.hasData == true else {
             return nil
         }
 
         return UsageResult(
-            remaining: primaryUsed.map { max(0, 100 - $0) },
-            used: primaryUsed,
-            total: primaryUsed == nil ? nil : 100,
-            refreshTime: primaryReset,
-            monthlyRemaining: secondaryUsed.map { max(0, 100 - $0) },
-            monthlyTotal: secondaryUsed == nil ? nil : 100,
-            monthlyUsed: secondaryUsed,
-            monthlyRefreshTime: secondaryReset,
+            remaining: fiveHourWindow?.used.map { max(0, 100 - $0) },
+            used: fiveHourWindow?.used,
+            total: fiveHourWindow?.used == nil ? nil : 100,
+            refreshTime: fiveHourWindow?.reset,
+            monthlyRemaining: weeklyWindow?.used.map { max(0, 100 - $0) },
+            monthlyTotal: weeklyWindow?.used == nil ? nil : 100,
+            monthlyUsed: weeklyWindow?.used,
+            monthlyRefreshTime: weeklyWindow?.reset,
             subscriptionPlan: planType,
-            primaryCycleIsPercentage: true,
-            secondaryCycleIsPercentage: true
+            primaryCycleIsPercentage: fiveHourWindow?.used == nil ? nil : true,
+            secondaryCycleIsPercentage: weeklyWindow?.used == nil ? nil : true
         )
+    }
+
+    private enum CodexQuotaWindowKind {
+        case fiveHour
+        case weekly
+    }
+
+    private struct CodexQuotaWindow {
+        let used: Double?
+        let reset: Date?
+        let durationMinutes: Double?
+
+        var hasData: Bool {
+            used != nil || reset != nil
+        }
+    }
+
+    private static func parseCodexWindow(_ window: [String: Any]) -> CodexQuotaWindow {
+        let durationMinutes = parseCodexWindowDurationMinutes(window)
+        return CodexQuotaWindow(
+            used: parseNumber(window["used_percent"] ?? window["usedPercent"]),
+            reset: parseResetDate(
+                window["reset_at"] ?? window["resets_at"] ?? window["resetsAt"],
+                resetAfter: window["reset_after_seconds"] ?? window["resetAfterSeconds"]
+            ),
+            durationMinutes: durationMinutes
+        )
+    }
+
+    private static func parseCodexWindowDurationMinutes(_ window: [String: Any]) -> Double? {
+        if let minutes = parseNumber(
+            window["window_minutes"] ??
+            window["windowDurationMins"] ??
+            window["window_duration_mins"] ??
+            window["windowDurationMinutes"] ??
+            window["window_duration_minutes"]
+        ) {
+            return minutes
+        }
+        if let seconds = parseNumber(
+            window["limit_window_seconds"] ??
+            window["window_seconds"] ??
+            window["windowDurationSeconds"] ??
+            window["window_duration_seconds"]
+        ) {
+            return seconds / 60
+        }
+        return nil
+    }
+
+    private static func assignCodexWindow(
+        _ window: CodexQuotaWindow,
+        fallbackKind: CodexQuotaWindowKind,
+        fiveHour: inout CodexQuotaWindow?,
+        weekly: inout CodexQuotaWindow?
+    ) {
+        guard window.hasData else { return }
+        switch codexWindowKind(for: window, fallback: fallbackKind) {
+        case .fiveHour:
+            if fiveHour == nil {
+                fiveHour = window
+            }
+        case .weekly:
+            if weekly == nil {
+                weekly = window
+            }
+        case nil:
+            break
+        }
+    }
+
+    private static func codexWindowKind(
+        for window: CodexQuotaWindow,
+        fallback: CodexQuotaWindowKind
+    ) -> CodexQuotaWindowKind? {
+        guard let durationMinutes = window.durationMinutes else {
+            return fallback
+        }
+        if abs(durationMinutes - 300) <= 5 {
+            return .fiveHour
+        }
+        if abs(durationMinutes - 10_080) <= 60 {
+            return .weekly
+        }
+        return nil
     }
 
     private static func parseResetDate(_ value: Any?, resetAfter: Any? = nil) -> Date? {

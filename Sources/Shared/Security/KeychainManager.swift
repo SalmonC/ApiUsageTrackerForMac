@@ -31,6 +31,8 @@ final class KeychainManager {
     private var keyringLoaded = false
     private var hasKeyringItem = false
     private var didAttemptLegacyMigration = false
+    private(set) var lastKeyringLoadStatus: OSStatus?
+    private(set) var lastLegacyLoadStatus: OSStatus?
     
     private init() {}
     
@@ -160,8 +162,14 @@ final class KeychainManager {
     private func loadKeyringIntoCache() -> Bool {
         defer { keyringLoaded = true }
         
-        guard let data = loadKeychainItemData(account: keyringAccount) else {
+        let result = copyKeychainItemData(account: keyringAccount)
+        lastKeyringLoadStatus = result.status
+
+        guard result.status == errSecSuccess, let data = result.data else {
             hasKeyringItem = false
+            if result.status != errSecItemNotFound {
+                Logger.critical("Keychain keyring load failed: status=\(result.status)")
+            }
             return false
         }
         hasKeyringItem = true
@@ -176,7 +184,7 @@ final class KeychainManager {
             return !decoded.isEmpty
         }
         
-        Logger.log("Failed to decode keyring item, ignoring cached keyring")
+        Logger.critical("Keychain keyring decode failed; keeping settings without API keys")
         return false
     }
     
@@ -235,6 +243,7 @@ final class KeychainManager {
         
         var result: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
+        lastLegacyLoadStatus = status
         
         guard status == errSecSuccess else {
             if status != errSecItemNotFound {
@@ -261,7 +270,7 @@ final class KeychainManager {
         return legacy
     }
     
-    private func loadKeychainItemData(account: String) -> Data? {
+    private func copyKeychainItemData(account: String) -> (status: OSStatus, data: Data?) {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -272,8 +281,8 @@ final class KeychainManager {
         
         var result: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
-        guard status == errSecSuccess else { return nil }
-        return result as? Data
+        guard status == errSecSuccess else { return (status, nil) }
+        return (status, result as? Data)
     }
     
     private func addKeychainItem(account: String, data: Data) -> OSStatus {
