@@ -12,6 +12,8 @@ ENTITLEMENTS="$PROJECT_ROOT/Sources/App/Resources/ApiUsageTrackerForMac.entitlem
 INSTALL="${INSTALL:-0}"
 EXPECTED_TEAM_IDENTIFIER="${EXPECTED_TEAM_IDENTIFIER:-Z7UZX2YQVM}"
 ALLOW_TEAM_CHANGE="${ALLOW_TEAM_CHANGE:-0}"
+ALLOW_REQUIREMENT_CHANGE="${ALLOW_REQUIREMENT_CHANGE:-0}"
+INSTALLED_APP="/Applications/$APP_NAME.app"
 
 source "$PROJECT_ROOT/VERSION"
 OUTPUT_DIR="${OUTPUT_DIR:-$PROJECT_ROOT/Artifacts/v$VERSION}"
@@ -27,6 +29,16 @@ find_identity() {
 
   local identities
   identities="$(security find-identity -v -p codesigning 2>/dev/null || true)"
+
+  if [[ -d "$INSTALLED_APP" ]]; then
+    local installed_authority
+    installed_authority="$(codesign -dv --verbose=4 "$INSTALLED_APP" 2>&1 | awk -F= '/^Authority=/{print $2; exit}' || true)"
+    if [[ -n "$installed_authority" ]] && printf '%s\n' "$identities" | grep -Fq "\"$installed_authority\""; then
+      echo "$installed_authority"
+      return
+    fi
+  fi
+
   local developer_id
   developer_id="$(printf '%s\n' "$identities" | awk -F'"' '/Developer ID Application:/ {print $2; exit}')"
   if [[ -n "$developer_id" ]]; then
@@ -106,12 +118,19 @@ TEAM_IDENTIFIER="$(codesign -dvv "$APP_PATH" 2>&1 | awk -F= '/^TeamIdentifier=/{
   exit 1
 }
 
-INSTALLED_APP="/Applications/$APP_NAME.app"
 if [[ -d "$INSTALLED_APP" ]]; then
   INSTALLED_TEAM="$(codesign -dvv "$INSTALLED_APP" 2>&1 | awk -F= '/^TeamIdentifier=/{print $2; exit}' || true)"
   if [[ -n "$INSTALLED_TEAM" && "$INSTALLED_TEAM" != "not set" && "$INSTALLED_TEAM" != "$TEAM_IDENTIFIER" && "$ALLOW_TEAM_CHANGE" != "1" ]]; then
     echo "Installed app uses TeamIdentifier $INSTALLED_TEAM; refusing silent change to $TEAM_IDENTIFIER." >&2
     echo "Set ALLOW_TEAM_CHANGE=1 only after planning a Keychain migration." >&2
+    exit 1
+  fi
+
+  INSTALLED_REQUIREMENT="$(codesign -d -r- "$INSTALLED_APP" 2>&1 | sed -n 's/^designated => //p' || true)"
+  NEW_REQUIREMENT="$(codesign -d -r- "$APP_PATH" 2>&1 | sed -n 's/^designated => //p' || true)"
+  if [[ -n "$INSTALLED_REQUIREMENT" && -n "$NEW_REQUIREMENT" && "$INSTALLED_REQUIREMENT" != "$NEW_REQUIREMENT" && "$ALLOW_REQUIREMENT_CHANGE" != "1" ]]; then
+    echo "Installed app and new app have different designated requirements; refusing silent Keychain ACL identity change." >&2
+    echo "Set ALLOW_REQUIREMENT_CHANGE=1 only after planning a one-time Keychain authorization migration." >&2
     exit 1
   fi
 fi

@@ -27,13 +27,16 @@ enum KeychainMigrationPolicy {
     }
 }
 
+enum KeychainStorageIdentity {
+    static let migrationCompletedKey = "keychain.login.v3.migrationCompleted"
+}
+
 enum KeychainQueryBuilder {
-    static func dataProtectionBase(service: String, account: String) -> [String: Any] {
+    static func loginKeychainBase(service: String, account: String) -> [String: Any] {
         [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecUseDataProtectionKeychain as String: true
+            kSecAttrAccount as String: account
         ]
     }
 }
@@ -58,7 +61,7 @@ final class KeychainManager {
     private let service = "com.mactools.apiusagetracker"
     private let keyringAccount = "__api_keys_v3__"
     private let legacyKeyringAccount = "__api_keys_v2__"
-    private let migrationCompletedKey = "keychain.v3.migrationCompleted"
+    private let migrationCompletedKey = KeychainStorageIdentity.migrationCompletedKey
     private let migrationDefaults: UserDefaults
     private var cachedKeys: [UUID: String] = [:]
     private var cachedMissingKeys: Set<UUID> = []
@@ -374,7 +377,7 @@ final class KeychainManager {
     }
     
     private func copyKeychainItemData(account: String) -> (status: OSStatus, data: Data?) {
-        var query = KeychainQueryBuilder.dataProtectionBase(service: service, account: account)
+        var query = KeychainQueryBuilder.loginKeychainBase(service: service, account: account)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
 
@@ -400,14 +403,13 @@ final class KeychainManager {
     }
     
     private func addKeychainItem(account: String, data: Data) -> OSStatus {
-        var query = KeychainQueryBuilder.dataProtectionBase(service: service, account: account)
+        var query = KeychainQueryBuilder.loginKeychainBase(service: service, account: account)
         query[kSecValueData as String] = data
-        query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         return SecItemAdd(query as CFDictionary, nil)
     }
     
     private func updateKeychainItem(account: String, data: Data) -> OSStatus {
-        let query = KeychainQueryBuilder.dataProtectionBase(service: service, account: account)
+        let query = KeychainQueryBuilder.loginKeychainBase(service: service, account: account)
         let attrs: [String: Any] = [
             kSecValueData as String: data
         ]
@@ -415,7 +417,7 @@ final class KeychainManager {
     }
 
     private func deleteKeychainItem(account: String) -> OSStatus {
-        let query = KeychainQueryBuilder.dataProtectionBase(service: service, account: account)
+        let query = KeychainQueryBuilder.loginKeychainBase(service: service, account: account)
         return SecItemDelete(query as CFDictionary)
     }
     

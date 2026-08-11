@@ -16,6 +16,11 @@ final class KeychainPolicyTests: XCTestCase {
                 migrationCompleted: true
             )
         )
+        XCTAssertNotEqual(
+            KeychainStorageIdentity.migrationCompletedKey,
+            "keychain.v3.migrationCompleted",
+            "The login-Keychain backend must not inherit the Data Protection migration marker"
+        )
     }
 
     func testAuthorizationFailuresNeverTriggerLegacyRead() {
@@ -33,13 +38,14 @@ final class KeychainPolicyTests: XCTestCase {
         )
     }
 
-    func testV3QueryOptsIntoDataProtectionKeychain() {
-        let query = KeychainQueryBuilder.dataProtectionBase(
+    func testV3QueryUsesLoginKeychainWithoutProvisioningOnlyAttributes() {
+        let query = KeychainQueryBuilder.loginKeychainBase(
             service: "test.service",
             account: "test.account"
         )
 
-        XCTAssertEqual(query[kSecUseDataProtectionKeychain as String] as? Bool, true)
+        XCTAssertNil(query[kSecUseDataProtectionKeychain as String])
+        XCTAssertNil(query[kSecAttrAccessible as String])
         XCTAssertEqual(query[kSecAttrService as String] as? String, "test.service")
         XCTAssertEqual(query[kSecAttrAccount as String] as? String, "test.account")
     }

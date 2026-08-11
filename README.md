@@ -5,7 +5,7 @@ A macOS menu bar application for tracking API usage quotas from various AI provi
 <p align="center">
   <img src="https://img.shields.io/badge/platform-macOS%2014.0+-blue" alt="Platform">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
-  <img src="https://img.shields.io/badge/version-1.0.10-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-1.0.11-blue" alt="Version">
 </p>
 
 ---
@@ -85,7 +85,7 @@ hdiutil create -srcfolder "$APP_PATH" -volname "QuotaPulse" -fs HFS+ -format UDZ
 For Sparkle release/appcast workflow, see:
 `scripts/release/README.md`
 
-For a stable local signature and Data Protection Keychain access, use:
+For a stable local signature and login Keychain access, use:
 
 ```bash
 INSTALL=1 ./scripts/build-secure-local-release.sh
@@ -225,7 +225,7 @@ hdiutil create -srcfolder "$APP_PATH" -volname "QuotaPulse" -fs HFS+ -format UDZ
 Sparkle 发布 / appcast 流程见：
 `scripts/release/README.md`
 
-需要稳定的本机签名与 Data Protection Keychain 访问时，使用：
+需要稳定的本机签名与登录钥匙串访问时，使用：
 
 ```bash
 INSTALL=1 ./scripts/build-secure-local-release.sh
@@ -297,6 +297,11 @@ INSTALL=1 ./scripts/build-secure-local-release.sh
 ---
 
 ## Changelog / 更新日志
+
+### v1.0.11 (2026-08-11)
+
+- **Compatibility / 兼容性**: Restore the established preferences domain so existing accounts, cached usage, history, menu bar pins, and settings remain available after upgrading / 恢复既有偏好域，升级后继续保留账号、缓存用量、历史、菜单栏固定项与设置
+- **Security / 安全**: Use the macOS login Keychain with a stable signed identity and Hardened Runtime, avoiding unsupported Personal Team App Group/Data Protection entitlements that caused empty accounts and Keychain error `-34018` / 使用稳定签名身份、Hardened Runtime 与 macOS 登录钥匙串，避开个人团队无法正确授权、会导致账号为空及钥匙串 `-34018` 的 App Group/Data Protection entitlement
 
 ### v1.0.10 (2026-08-11)
 
